@@ -1,0 +1,516 @@
+import React, { useState, useEffect } from 'react';
+import { getMission, updateMission, dispatchMission, deleteMission, generateNextMission, resumeMission, startMissionRemoteControl, stopRemoteControl, listSessions, getMissionEvents } from '../api/client';
+import StatusBadge from '../components/StatusBadge';
+import PromptEditor from '../components/PromptEditor';
+import ReportView from '../components/ReportView';
+import DispatchPanel from '../components/DispatchPanel';
+import RemoteControlModal from '../components/RemoteControlModal';
+
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  let normalized = dateStr;
+  if (!normalized.includes('T')) normalized = normalized.replace(' ', 'T');
+  if (!normalized.endsWith('Z') && !normalized.includes('+')) normalized += 'Z';
+  const ts = new Date(normalized).getTime();
+  if (isNaN(ts)) return '';
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+export default function MissionDetail({ id, navigate }) {
+  const [mission, setMission] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [prompt, setPrompt] = useState('');
+  const [criteria, setCriteria] = useState('');
+  const [title, setTitle] = useState('');
+  const [error, setError] = useState(null);
+  const [dispatching, setDispatching] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [showDispatchPanel, setShowDispatchPanel] = useState(false);
+  const [remoteUrl, setRemoteUrl] = useState(null);
+  const [startingRemote, setStartingRemote] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [activeRemoteSession, setActiveRemoteSession] = useState(null);
+  const [events, setEvents] = useState([]);
+
+  const load = async () => {
+    try {
+      const m = await getMission(id);
+      setMission(m);
+      setPrompt(m.detailed_prompt);
+      setCriteria(m.acceptance_criteria);
+      setTitle(m.title);
+      // Load mission events
+      try {
+        const evts = await getMissionEvents(id);
+        setEvents(evts || []);
+      } catch {}
+      // Check for active remote sessions (status could be 'remote' or 'running' with a remote_url)
+      try {
+        const sessions = await listSessions({ mission_id: id });
+        const active = sessions.find(s =>
+          (s.status === 'remote' || (s.status === 'running' && s.remote_url)) && !s.ended_at
+        );
+        setActiveRemoteSession(active || null);
+      } catch {}
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  useEffect(() => { load(); }, [id]);
+
+  const handleSave = async () => {
+    try {
+      await updateMission(id, { title, detailed_prompt: prompt, acceptance_criteria: criteria });
+      setEditing(false);
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleDispatch = async (opts = null) => {
+    setDispatching(true);
+    setError(null);
+    setShowDispatchPanel(false);
+    try {
+      const result = await dispatchMission(id, opts);
+      navigate('live', result.session_id);
+    } catch (e) {
+      setError(e.message);
+      setDispatching(false);
+    }
+  };
+
+  const handleGenerateNext = async () => {
+    setGenerating(true);
+    setError(null);
+    try {
+      const newMission = await generateNextMission(id);
+      navigate('mission', newMission.id);
+    } catch (e) {
+      setError(e.message);
+      setGenerating(false);
+    }
+  };
+
+  const handleResume = async () => {
+    setResuming(true);
+    setError(null);
+    try {
+      const result = await resumeMission(id);
+      navigate('live', result.session_id);
+    } catch (e) {
+      setError(e.message);
+      setResuming(false);
+    }
+  };
+
+  const handleRemoteControl = async () => {
+    setStartingRemote(true);
+    setError(null);
+    try {
+      const result = await startMissionRemoteControl(id);
+      setRemoteUrl(result.url);
+      setActiveRemoteSession({ id: result.session_id, status: 'remote', remote_url: result.url });
+      load(); // refresh mission status
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setStartingRemote(false);
+    }
+  };
+
+  const handleDisconnectRemote = async () => {
+    if (!activeRemoteSession) return;
+    setDisconnecting(true);
+    setError(null);
+    try {
+      await stopRemoteControl(activeRemoteSession.id);
+      setActiveRemoteSession(null);
+      setRemoteUrl(null);
+      load(); // refresh mission status
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm('Delete this mission?')) return;
+    try {
+      await deleteMission(id);
+      navigate('missions');
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  if (!mission) return <div className="text-muted">Loading...</div>;
+
+  const canEdit = mission.status !== 'running';
+  const canDispatch = mission.status !== 'running';
+
+  return (
+    <div>
+      <button className="back-btn" onClick={() => navigate('missions')}>
+        ← Back to Missions
+      </button>
+
+      <div className="page-header">
+        <div style={{ flex: 1 }}>
+          {editing ? (
+            <input className="form-input" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }} />
+          ) : (
+            <h2>{mission.title}</h2>
+          )}
+          <div className="flex items-center gap-12 mt-16">
+            <StatusBadge status={mission.status} />
+            <span className="text-sm text-muted">{mission.project_name}</span>
+            <span className="text-sm text-muted">{timeAgo(mission.updated_at)}</span>
+            {mission.model && mission.model !== 'claude-opus-4-6' && (
+              <span className="tag">{mission.model.replace('claude-', '').replace(/-\d+$/, '')}</span>
+            )}
+            {mission.mission_type && mission.mission_type !== 'implement' && (
+              <span className="tag">{mission.mission_type}</span>
+            )}
+          </div>
+        </div>
+        <div className="flex gap-8">
+          {canEdit && !editing && (
+            <button className="btn btn-ghost" onClick={() => setEditing(true)}>Edit</button>
+          )}
+          {editing && (
+            <>
+              <button className="btn btn-ghost" onClick={() => { setEditing(false); setPrompt(mission.detailed_prompt); setCriteria(mission.acceptance_criteria); setTitle(mission.title); }}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSave}>Save</button>
+            </>
+          )}
+          {canDispatch && !editing && (
+            <>
+              <button className="btn btn-success" onClick={() => setShowDispatchPanel(!showDispatchPanel)} disabled={dispatching}>
+                {dispatching ? 'Dispatching...' : 'Dispatch Agent'}
+              </button>
+              <button
+                className="btn btn-remote"
+                onClick={handleRemoteControl}
+                disabled={startingRemote}
+                title="Open interactive session on phone/browser"
+              >
+                {startingRemote ? 'Starting...' : 'Remote Control'}
+              </button>
+            </>
+          )}
+          {activeRemoteSession && !editing && (
+            <>
+              <button
+                className="btn btn-remote"
+                onClick={() => setRemoteUrl(activeRemoteSession.remote_url)}
+                title="Show remote session QR code"
+                style={{ opacity: 0.9 }}
+              >
+                Reconnect
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={handleDisconnectRemote}
+                disabled={disconnecting}
+                title="Disconnect remote session and take back control"
+              >
+                {disconnecting ? 'Disconnecting...' : 'Disconnect Remote'}
+              </button>
+            </>
+          )}
+          {mission.status === 'failed' && !editing && (
+            <button className="btn btn-warning" onClick={handleResume} disabled={resuming}>
+              {resuming ? 'Resuming...' : 'Resume'}
+            </button>
+          )}
+          {mission.status === 'completed' && mission.latest_report && !editing && (
+            <button className="btn btn-primary" onClick={handleGenerateNext} disabled={generating}>
+              {generating ? 'Generating...' : 'Next Mission'}
+            </button>
+          )}
+          {canEdit && (
+            <button className="btn btn-danger btn-sm" onClick={handleDelete}>Delete</button>
+          )}
+        </div>
+      </div>
+
+      {error && <div style={{ color: 'var(--danger)', marginBottom: 16 }}>{error}</div>}
+
+      {showDispatchPanel && (
+        <DispatchPanel
+          mission={mission}
+          onDispatch={handleDispatch}
+          onCancel={() => setShowDispatchPanel(false)}
+        />
+      )}
+
+      {remoteUrl && (
+        <RemoteControlModal
+          url={remoteUrl}
+          onClose={() => setRemoteUrl(null)}
+        />
+      )}
+
+      <div className="section">
+        <div className="section-title">Mission Prompt</div>
+        <PromptEditor value={prompt} onChange={setPrompt} readOnly={!editing} />
+      </div>
+
+      {(criteria || editing) && (
+        <div className="section">
+          <div className="section-title">Acceptance Criteria</div>
+          <textarea
+            className="form-textarea font-mono"
+            value={criteria}
+            onChange={e => setCriteria(e.target.value)}
+            readOnly={!editing}
+            rows={4}
+            style={{ width: '100%' }}
+          />
+        </div>
+      )}
+
+      {/* Parent Mission Link */}
+      {mission.parent_mission_id && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '10px 16px', marginBottom: 16,
+          background: 'rgba(123,97,255,0.06)', border: '1px solid rgba(123,97,255,0.12)',
+          borderRadius: 'var(--radius-md)', fontSize: 13,
+        }}>
+          <span style={{ color: 'var(--accent-text)' }}>Sub-mission of</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => navigate('mission', mission.parent_mission_id)}
+            style={{ fontWeight: 600, color: 'var(--accent-text)' }}>
+            View Parent Mission
+          </button>
+          {mission.depends_on && JSON.parse(mission.depends_on || '[]').length > 0 && (
+            <span style={{ color: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+              depends on {JSON.parse(mission.depends_on).length} mission(s)
+            </span>
+          )}
+          {mission.auto_dispatch === 1 && (
+            <span style={{
+              fontSize: 10, fontWeight: 700, padding: '2px 8px',
+              background: 'rgba(34,197,94,0.1)', color: 'var(--success)',
+              borderRadius: 'var(--radius-full)',
+            }}>AUTO</span>
+          )}
+        </div>
+      )}
+
+      {/* Schedule Badge */}
+      {mission.schedule_cron && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '10px 16px', marginBottom: 16,
+          background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.12)',
+          borderRadius: 'var(--radius-md)', fontSize: 13,
+        }}>
+          <span style={{ fontSize: 16 }}>{'\u23F0'}</span>
+          <span style={{ color: 'var(--warning)' }}>Scheduled</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>
+            {mission.schedule_cron}
+          </span>
+          <span style={{
+            fontSize: 10, fontWeight: 700, padding: '2px 8px',
+            background: mission.schedule_enabled ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+            color: mission.schedule_enabled ? 'var(--success)' : 'var(--danger)',
+            borderRadius: 'var(--radius-full)',
+          }}>{mission.schedule_enabled ? 'ACTIVE' : 'DISABLED'}</span>
+        </div>
+      )}
+
+      {mission.latest_report && (
+        <div className="section">
+          <div className="section-title">Latest Report</div>
+          <ReportView report={mission.latest_report} />
+        </div>
+      )}
+
+      {/* Sub-Missions Tree */}
+      {mission.children && mission.children.length > 0 && (
+        <div className="section">
+          <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>Sub-Missions</span>
+            <span style={{
+              fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-full)',
+              background: 'var(--accent-soft)', color: 'var(--accent-text)', fontWeight: 600,
+            }}>{mission.children.length}</span>
+          </div>
+          <div className="flex flex-col gap-8">
+            {mission.children.map(child => (
+              <div key={child.id}
+                className="card card-clickable"
+                onClick={() => navigate('mission', child.id)}
+                style={{
+                  padding: '12px 16px',
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  borderLeft: `3px solid ${
+                    child.status === 'completed' ? 'var(--success)' :
+                    child.status === 'running' ? 'var(--warning)' :
+                    child.status === 'failed' ? 'var(--danger)' : 'var(--border)'
+                  }`,
+                }}>
+                <div style={{
+                  width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 14, color: 'var(--text-muted)',
+                }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{child.title}</div>
+                  {child.mission_type && (
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{child.mission_type}</span>
+                  )}
+                </div>
+                <StatusBadge status={child.status} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Mission Events Timeline */}
+      {events.length > 0 && (
+        <div className="section">
+          <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>Events</span>
+            <span style={{
+              fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-full)',
+              background: 'var(--info-soft)', color: 'var(--info)', fontWeight: 600,
+            }}>{events.length}</span>
+          </div>
+          <div className="flex flex-col gap-4">
+            {events.slice(0, 20).map(evt => (
+              <div key={evt.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 12px', fontSize: 12,
+                background: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)',
+                borderLeft: `2px solid ${
+                  evt.event_type === 'auto_dispatched' ? 'var(--success)' :
+                  evt.event_type === 'dispatch_failed' ? 'var(--danger)' :
+                  evt.event_type === 'dependency_met' ? 'var(--info)' : 'var(--text-dim)'
+                }`,
+              }}>
+                <span style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)',
+                  minWidth: 120,
+                }}>{timeAgo(evt.created_at)}</span>
+                <span style={{
+                  fontWeight: 600, fontSize: 11, textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                  color: evt.event_type === 'auto_dispatched' ? 'var(--success)' :
+                         evt.event_type === 'dispatch_failed' ? 'var(--danger)' :
+                         evt.event_type === 'dependency_met' ? 'var(--info)' : 'var(--text-secondary)',
+                }}>
+                  {evt.event_type.replace(/_/g, ' ')}
+                </span>
+                {evt.data && evt.data !== '{}' && (
+                  <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                    {(() => { try { const d = JSON.parse(evt.data); return d.error || d.session_id || ''; } catch { return ''; } })()}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Human Input Needed banner — shows after agent completes/fails */}
+      {(mission.status === 'completed' || mission.status === 'failed') && mission.sessions?.length > 0 && (
+        <div className="human-input-banner">
+          <div className="human-input-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          </div>
+          <div className="human-input-content">
+            <div className="human-input-title">Human Input Needed</div>
+            <div className="human-input-text">
+              The agent ran in an <strong>isolated git worktree</strong>. You need to verify and merge its work before it takes effect.
+            </div>
+            <div className="human-input-steps">
+              <div className="human-input-step">
+                <span className="human-step-num">1</span>
+                <span>Review the report above — check files changed, errors, and what's untested</span>
+              </div>
+              <div className="human-input-step">
+                <span className="human-step-num">2</span>
+                <span>Merge the worktree branch: <code>git merge devfleet/{'<session-id>'}</code></span>
+              </div>
+              <div className="human-input-step">
+                <span className="human-step-num">3</span>
+                <span>Run tests and verify the changes work on your machine</span>
+              </div>
+              {mission.status === 'failed' && (
+                <div className="human-input-step">
+                  <span className="human-step-num">4</span>
+                  <span>If the agent failed, click <strong>Resume</strong> to continue with full context, or fix manually</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mission.sessions && mission.sessions.length > 0 && (
+        <div className="section">
+          <div className="section-title">Session History</div>
+          <div className="flex flex-col gap-8">
+            {mission.sessions.map(s => (
+              <div
+                key={s.id}
+                className="card card-clickable"
+                onClick={() => s.status === 'running' ? navigate('live', s.id) : null}
+                style={{ padding: '12px 16px' }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-12">
+                    <StatusBadge status={s.status} />
+                    <span className="text-sm text-muted">{timeAgo(s.started_at)}</span>
+                    {s.model && <span className="tag">{s.model.replace('claude-', '').split('-')[0]}</span>}
+                    {s.ended_at && <span className="text-sm text-muted">
+                      Duration: {Math.round((new Date(s.ended_at + 'Z') - new Date(s.started_at + 'Z')) / 60000)}m
+                    </span>}
+                    {s.total_cost_usd > 0 && (
+                      <span className="text-sm font-mono" style={{ color: 'var(--accent-text)' }}>
+                        ${s.total_cost_usd.toFixed(4)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-8">
+                    {s.remote_url && (
+                      <a href={s.remote_url} target="_blank" rel="noopener noreferrer"
+                         className="btn btn-remote btn-sm"
+                         onClick={e => e.stopPropagation()}>
+                        Remote
+                      </a>
+                    )}
+                    {s.exit_code !== null && (
+                      <span className="text-sm font-mono text-muted">exit {s.exit_code}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

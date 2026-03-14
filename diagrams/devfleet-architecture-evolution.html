@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DevFleet — Architecture Evolution</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      themeVariables: {
+        primaryColor: '#e8f4f8',
+        primaryTextColor: '#1a1a2e',
+        primaryBorderColor: '#3a86ff',
+        lineColor: '#555',
+        secondaryColor: '#fff3e0',
+        tertiaryColor: '#f0f0f0',
+        fontSize: '14px'
+      }
+    });
+  </script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; background: #fafafa; padding: 40px; }
+    h1 { font-size: 18pt; color: #1a1a2e; margin-bottom: 8px; }
+    h2 { font-size: 12pt; color: #666; font-weight: normal; margin-bottom: 32px; }
+    .mermaid { max-width: 100%; }
+  </style>
+</head>
+<body>
+  <h1>DevFleet — Architecture Evolution</h1>
+  <h2>From CLI subprocess to autonomous multi-agent platform</h2>
+  <div class="mermaid">
+graph TD
+    subgraph Phase0["⚙️ Phase 0 — Foundation (CLI Subprocess)"]
+        P0_UI["🌐 React UI<br /><small>SSE live output</small>"]
+        P0_API["📡 FastAPI<br /><small>Routes + dispatch</small>"]
+        P0_CLI["🖥️ CLI Subprocess<br /><small>claude --output-format stream-json</small>"]
+        P0_Parse["🔄 Stream Parser<br /><small>stdout → SSE events</small>"]
+        P0_State["💾 In-Memory State<br /><small>running_tasks dict</small>"]
+        P0_DB["🗄️ SQLite<br /><small>missions, sessions</small>"]
+
+        P0_UI -->|"HTTP/SSE"| P0_API
+        P0_API -->|"spawn"| P0_CLI
+        P0_CLI -->|"stdout"| P0_Parse
+        P0_Parse -->|"broadcast"| P0_State
+        P0_State -->|"persist"| P0_DB
+    end
+
+    subgraph Phase1["🚀 Phase 1 — SDK Migration"]
+        P1_SDK["🤖 Claude Code SDK<br /><small>claude-code-sdk Python API</small>"]
+        P1_Stream["📊 Structured Messages<br /><small>TextBlock, ToolUseBlock, ResultBlock</small>"]
+        P1_Conv["💬 Conversation Persistence<br /><small>conversations table</small>"]
+        P1_Cost["💰 Cost Tracking<br /><small>Real-time token + USD</small>"]
+        P1_Resume["🔄 Session Resume<br /><small>Full context preserved</small>"]
+
+        P1_SDK -->|"async iterator"| P1_Stream
+        P1_Stream -->|"save"| P1_Conv
+        P1_SDK -->|"result.usage"| P1_Cost
+        P1_Conv -->|"reload"| P1_Resume
+    end
+
+    subgraph Phase2["🔌 Phase 2 — MCP Ecosystem"]
+        P2_Ctx["📋 Context Server<br /><small>devfleet-context (stdio)</small>"]
+        P2_Tools["🛠️ Tools Server<br /><small>devfleet-tools (stdio)</small>"]
+        P2_Proj["🏗️ Per-Project MCP<br /><small>mcp_configs table</small>"]
+        P2_Report["📝 Report Pickup<br /><small>File-based JSON handoff</small>"]
+
+        P2_Ctx -->|"5 context tools"| P2_Agent["🤖 Agent"]
+        P2_Tools -->|"5 self-service tools"| P2_Agent
+        P2_Proj -->|"custom servers"| P2_Agent
+        P2_Agent -->|"submit_report"| P2_Report
+    end
+
+    subgraph Phase3["🧠 Phase 3 — Autonomous Multi-Agent"]
+        P3_Watcher["👁️ Mission Watcher<br /><small>polls every 5s, checks deps</small>"]
+        P3_Sched["⏰ Scheduler<br /><small>Cron-based, template cloning</small>"]
+        P3_AutoLoop["🔄 Auto-Loop<br /><small>Parallel plan → dispatch cycle</small>"]
+        P3_SubM["🔀 Sub-Missions<br /><small>Agent-created, auto-dispatched</small>"]
+        P3_Deps["🔗 Dependency Graph<br /><small>depends_on + json_each()</small>"]
+
+        P3_Watcher -->|"auto-dispatch"| P3_Agents["🤖🤖🤖 Agent Pool"]
+        P3_Sched -->|"clone + dispatch"| P3_Watcher
+        P3_AutoLoop -->|"plan tasks"| P3_Watcher
+        P3_SubM -->|"create"| P3_Deps
+        P3_Deps -->|"satisfied?"| P3_Watcher
+    end
+
+    Phase0 -->|"replace CLI with SDK"| Phase1
+    Phase1 -->|"add stdio MCP servers"| Phase2
+    Phase2 -->|"add orchestration layer"| Phase3
+
+    style Phase0 fill:#ffe8e8,stroke:#d63031,stroke-width:2px
+    style Phase1 fill:#e8f4f8,stroke:#3a86ff,stroke-width:2px
+    style Phase2 fill:#e8ffe8,stroke:#2d9a2d,stroke-width:2px
+    style Phase3 fill:#f3e8ff,stroke:#8e44ad,stroke-width:2px
+
+    classDef phase0 fill:#FFB6C1,stroke:#d63031,stroke-width:2px,color:#333
+    classDef phase1 fill:#87CEEB,stroke:#3a86ff,stroke-width:2px,color:darkblue
+    classDef phase2 fill:#90EE90,stroke:#2d9a2d,stroke-width:2px,color:darkgreen
+    classDef phase3 fill:#E6E6FA,stroke:#8e44ad,stroke-width:2px,color:#333
+
+    class P0_UI,P0_API,P0_CLI,P0_Parse,P0_State,P0_DB phase0
+    class P1_SDK,P1_Stream,P1_Conv,P1_Cost,P1_Resume phase1
+    class P2_Ctx,P2_Tools,P2_Proj,P2_Report,P2_Agent phase2
+    class P3_Watcher,P3_Sched,P3_AutoLoop,P3_SubM,P3_Deps,P3_Agents phase3
+  </div>
+</body>
+</html>

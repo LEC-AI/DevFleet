@@ -1,0 +1,41 @@
+services:
+  devfleet-api:
+    build: ./backend
+    container_name: devfleet-api
+    ports:
+      - "18801:18801"
+    volumes:
+      # Backend code (hot-reload in dev)
+      - ./backend:/app
+
+      # SQLite database — persisted on host
+      - ./data:/app/data
+
+      # Claude CLI binary + config — mounted from host
+      - ${HOME}/.local/share/claude:/home/devfleet/.local/share/claude:ro
+      - ${HOME}/.local/bin/claude:/usr/local/bin/claude:ro
+      - ${HOME}/.claude:/home/devfleet/.claude
+      - ${HOME}/.claude.json:/home/devfleet/.claude.json
+
+      # Project directories the agents will work on — add your repos here
+      # - /path/to/your/project:/workspace/your-project
+    environment:
+      - DEVFLEET_DB=/app/data/devfleet.db
+      - DEVFLEET_MAX_AGENTS=3
+      - HOME=/home/devfleet
+      - ANTHROPIC_BASE_URL=https://api.anthropic.com
+      # Path mapping: enter host paths in UI, auto-translated inside container
+      # Format: DEVFLEET_PATH_MAP_N=HOST_PATH:CONTAINER_PATH
+      # - DEVFLEET_PATH_MAP_1=/path/to/your/project:/workspace/your-project
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  devfleet-ui:
+    build: ./frontend
+    container_name: devfleet-ui
+    ports:
+      - "3101:80"
+    depends_on:
+      - devfleet-api
+    restart: unless-stopped

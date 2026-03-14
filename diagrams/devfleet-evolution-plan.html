@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DevFleet Evolution — Architecture Roadmap</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      themeVariables: {
+        primaryColor: '#e8f4f8',
+        primaryTextColor: '#1a1a2e',
+        primaryBorderColor: '#3a86ff',
+        lineColor: '#555',
+        secondaryColor: '#fff3e0',
+        tertiaryColor: '#f0f0f0',
+        fontSize: '14px'
+      }
+    });
+  </script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; background: #fafafa; padding: 40px; }
+    h1 { font-size: 18pt; color: #1a1a2e; margin-bottom: 8px; }
+    h2 { font-size: 13pt; color: #555; font-weight: 400; margin-bottom: 32px; }
+    .diagram-section { margin-bottom: 48px; width: 100%; max-width: 1200px; }
+    .diagram-section h3 { font-size: 14pt; color: #1a1a2e; border-bottom: 2px solid #3a86ff; padding-bottom: 8px; margin-bottom: 16px; }
+    .mermaid { max-width: 100%; }
+  </style>
+</head>
+<body>
+  <h1>DevFleet Evolution — Architecture Roadmap</h1>
+  <h2>From CLI Spawning → Autonomous Agent Platform</h2>
+
+  <div class="diagram-section">
+    <h3>Current State → Target Architecture</h3>
+    <div class="mermaid">
+graph TD
+    subgraph Current["🔴 Current — CLI Subprocess Model"]
+        C_UI["🌐 React UI<br /><small>SSE streaming · dispatch panel</small>"]
+        C_API["📡 FastAPI<br /><small>app.py · routes · in-memory state</small>"]
+        C_DISP["⚙️ Dispatcher<br /><small>subprocess.spawn · stream-json parse</small>"]
+        C_CLI["🖥️ Claude CLI<br /><small>--output-format stream-json</small>"]
+        C_WT["🔀 Worktree<br /><small>git isolation per agent</small>"]
+        C_DB["🗄️ SQLite<br /><small>missions · sessions · reports</small>"]
+        C_AL["🔄 Auto-Loop<br /><small>plan → dispatch → repeat</small>"]
+    end
+
+    subgraph Phase1["🟢 Phase 1 — Agent SDK Core"]
+        P1_SDK["🤖 Agent SDK Engine<br /><small>Python API · native streaming</small>"]
+        P1_CONV["💬 Conversation Store<br /><small>message history · resume state</small>"]
+        P1_STRUCT["📋 Structured Output<br /><small>tool-based reports · JSON schema</small>"]
+        P1_HOOKS["🛡️ Hooks System<br /><small>pre/post tool · safety gates</small>"]
+        P1_SUB["🧩 Custom Subagents<br /><small>implement · review · test · fix</small>"]
+    end
+
+    subgraph Phase2["🔵 Phase 2 — MCP Ecosystem"]
+        P2_CTX["🧠 Context Model MCP<br /><small>default server for all agents</small>"]
+        P2_SELF["📡 DevFleet-as-MCP<br /><small>expose missions · reports · status</small>"]
+        P2_STACK["🔧 MCP Tool Stack<br /><small>GitHub · Brave · Notion · Memory</small>"]
+        P2_RESUME["🔄 Session Continuity<br /><small>MCP-backed resume with context</small>"]
+    end
+
+    subgraph Phase3["🟣 Phase 3 — Autonomous Platform"]
+        P3_TEAMS["👥 Agent Teams<br /><small>parallel workers · coordinator</small>"]
+        P3_SCHED["⏱️ Scheduled Agents<br /><small>cron · recurring missions</small>"]
+        P3_MULTI["🎯 Multi-Phase Missions<br /><small>plan → implement → review → test</small>"]
+        P3_VALID["✅ Output Validation<br /><small>schema enforce · quality gates</small>"]
+    end
+
+    Current -->|"migrate"| Phase1
+    Phase1 -->|"extend"| Phase2
+    Phase2 -->|"orchestrate"| Phase3
+
+    style Current fill:#ffe8e8,stroke:#d63031,stroke-width:2px
+    style Phase1 fill:#e8ffe8,stroke:#2d9a2d,stroke-width:2px
+    style Phase2 fill:#e8f4f8,stroke:#3a86ff,stroke-width:2px
+    style Phase3 fill:#f3e8ff,stroke:#8e44ad,stroke-width:2px
+    </div>
+  </div>
+
+  <div class="diagram-section">
+    <h3>Phase 1 — Agent SDK Migration (Detail)</h3>
+    <div class="mermaid">
+graph TD
+    subgraph APILayer["🔵 API Layer"]
+        Routes["📡 FastAPI Routes<br /><small>dispatch · resume · cancel</small>"]
+        WS["🔌 WebSocket<br /><small>bidirectional streaming</small>"]
+    end
+
+    subgraph SDKEngine["🟢 SDK Engine — replaces dispatcher.py"]
+        AgentLoop["🤖 Agent Loop<br /><small>claude_agent_sdk.create_agent</small>"]
+        ToolReg["🔧 Tool Registry<br /><small>custom tools per mission type</small>"]
+        HooksMgr["🛡️ Hooks Manager<br /><small>pre_tool · post_tool · on_error</small>"]
+        ReportTool["📋 submit_report Tool<br /><small>structured JSON · replaces text markers</small>"]
+        CostTrack["💰 Cost Tracker<br /><small>token counting · budget enforcement</small>"]
+    end
+
+    subgraph Persistence["🔴 Persistence Layer"]
+        ConvoDB["💬 Conversations Table<br /><small>role · content · tool_calls</small>"]
+        SessionDB["🗄️ Sessions Table<br /><small>+ sdk_thread_id · hook_config</small>"]
+        ToolConfDB["🔧 Tool Configs Table<br /><small>per-project tool definitions</small>"]
+    end
+
+    subgraph Subagents["🟣 Mission-Type Subagents"]
+        Implement["⚙️ Implement Agent<br /><small>full tools · write access</small>"]
+        Review["🔍 Review Agent<br /><small>read-only · Bash restricted</small>"]
+        Test["🧪 Test Agent<br /><small>Bash + test runners only</small>"]
+        Fix["🐛 Fix Agent<br /><small>targeted edit · test · verify</small>"]
+        Explore["🧭 Explore Agent<br /><small>read + search only</small>"]
+    end
+
+    Routes -->|"dispatch"| AgentLoop
+    WS -->|"stream events"| AgentLoop
+    AgentLoop --> ToolReg
+    AgentLoop --> HooksMgr
+    AgentLoop --> ReportTool
+    AgentLoop --> CostTrack
+    AgentLoop -->|"spawn"| Subagents
+    ReportTool -->|"persist"| ConvoDB
+    AgentLoop -->|"save state"| SessionDB
+    ToolReg -->|"load config"| ToolConfDB
+
+    style APILayer fill:#e8f4f8,stroke:#3a86ff,stroke-width:2px
+    style SDKEngine fill:#e8ffe8,stroke:#2d9a2d,stroke-width:2px
+    style Persistence fill:#ffe8e8,stroke:#d63031,stroke-width:2px
+    style Subagents fill:#f3e8ff,stroke:#8e44ad,stroke-width:2px
+    </div>
+  </div>
+
+  <div class="diagram-section">
+    <h3>Phase 2 — MCP Ecosystem (Detail)</h3>
+    <div class="mermaid">
+graph TD
+    subgraph Agent["🤖 Running Agent"]
+        SDK["⚙️ Agent SDK Loop"]
+    end
+
+    subgraph DefaultMCP["🧠 Context Model MCP — Auto-Attached"]
+        ProjCtx["📂 Project Context<br /><small>codebase structure · conventions</small>"]
+        MissionCtx["🎯 Mission Context<br /><small>requirements · acceptance criteria</small>"]
+        HistoryCtx["📜 Session History<br /><small>past reports · decisions · learnings</small>"]
+        TeamCtx["👥 Team Context<br /><small>other agents' progress · blockers</small>"]
+    end
+
+    subgraph DevFleetMCP["📡 DevFleet-as-MCP Server"]
+        CreateMission["📝 create_mission<br /><small>agents can spawn sub-missions</small>"]
+        ReadReport["📋 read_report<br /><small>query past session reports</small>"]
+        UpdateStatus["🔄 update_status<br /><small>real-time progress updates</small>"]
+        RequestReview["🔍 request_review<br /><small>trigger review agent on work</small>"]
+    end
+
+    subgraph ExternalMCP["🔧 External MCP Stack"]
+        GH["🐙 GitHub MCP<br /><small>PRs · issues · code search</small>"]
+        Brave["🔍 Brave Search MCP<br /><small>web research · docs lookup</small>"]
+        Memory["🧠 Memory MCP<br /><small>persistent knowledge graph</small>"]
+        Notion["📝 Notion MCP<br /><small>project docs · wikis</small>"]
+    end
+
+    SDK -->|"always connected"| DefaultMCP
+    SDK -->|"self-service"| DevFleetMCP
+    SDK -->|"configured per project"| ExternalMCP
+    CreateMission -->|"dispatch"| Agent
+    HistoryCtx -->|"resume context"| SDK
+
+    style Agent fill:#e8ffe8,stroke:#2d9a2d,stroke-width:2px
+    style DefaultMCP fill:#e8f4f8,stroke:#3a86ff,stroke-width:2px
+    style DevFleetMCP fill:#f3e8ff,stroke:#8e44ad,stroke-width:2px
+    style ExternalMCP fill:#fff3e0,stroke:#ff9800,stroke-width:2px
+    </div>
+  </div>
+
+  <div class="diagram-section">
+    <h3>Phase 3 — Autonomous Multi-Agent Platform (Detail)</h3>
+    <div class="mermaid">
+graph TD
+    subgraph Scheduler["⏱️ Scheduler"]
+        Cron["🕐 Cron Engine<br /><small>recurring missions · intervals</small>"]
+        Trigger["🔔 Event Triggers<br /><small>on PR · on push · on incident</small>"]
+    end
+
+    subgraph Coordinator["🎯 Mission Coordinator"]
+        Planner["🧠 Planner Agent<br /><small>SDK-based · structured plan output</small>"]
+        Orchestrator["🔀 Orchestrator<br /><small>phase sequencing · dependency graph</small>"]
+        QualityGate["✅ Quality Gate<br /><small>tests pass · review approved · schema valid</small>"]
+    end
+
+    subgraph TeamExec["👥 Agent Team Execution"]
+        W1["⚙️ Worker 1<br /><small>implement feature A</small>"]
+        W2["⚙️ Worker 2<br /><small>implement feature B</small>"]
+        W3["🧪 Test Worker<br /><small>parallel test suite</small>"]
+        R1["🔍 Review Worker<br /><small>code review all changes</small>"]
+    end
+
+    subgraph Validation["🛡️ Output Validation"]
+        Schema["📋 JSON Schema<br /><small>report structure enforcement</small>"]
+        Lint["🔧 Lint & Build<br /><small>automated quality checks</small>"]
+        Merge["🔀 Auto-Merge<br /><small>worktree → main on pass</small>"]
+    end
+
+    Scheduler -->|"trigger"| Coordinator
+    Planner -->|"plan phases"| Orchestrator
+    Orchestrator -->|"dispatch parallel"| W1 & W2
+    Orchestrator -->|"then"| W3
+    W3 -->|"then"| R1
+    W1 & W2 & W3 & R1 -->|"submit"| QualityGate
+    QualityGate -->|"validate"| Validation
+    Schema --> Lint --> Merge
+
+    style Scheduler fill:#fff3e0,stroke:#ff9800,stroke-width:2px
+    style Coordinator fill:#e8f4f8,stroke:#3a86ff,stroke-width:2px
+    style TeamExec fill:#e8ffe8,stroke:#2d9a2d,stroke-width:2px
+    style Validation fill:#f3e8ff,stroke:#8e44ad,stroke-width:2px
+    </div>
+  </div>
+
+</body>
+</html>
