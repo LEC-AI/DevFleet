@@ -129,6 +129,7 @@ docker compose up -d
 - **Session Resume** — Resume failed sessions with full conversation context preserved
 - **Structured Reports** — Agents submit structured reports via MCP tool (files changed, what's done/open, next steps)
 - **Generate Next Mission** — One-click follow-up mission from the last report's next steps
+- **AI Project Planner** — Describe what you want to build in natural language; Claude breaks it into a project with chained missions, dependencies, and auto-dispatch
 
 ### Multi-Agent Orchestration
 
@@ -229,6 +230,9 @@ Take over any agent session from your phone or browser:
 | `frontend/src/api/client.js` | API client + SSE streaming |
 
 ## API Endpoints
+
+### Planner
+- `POST /api/plan` — AI project planner: takes a natural language prompt, returns a project with chained missions
 
 ### Projects
 - `GET /api/projects` — List projects
@@ -334,6 +338,7 @@ docker top devfleet-api | grep claude  # check before restarting
 | `DEVFLEET_WATCHER_INTERVAL` | `5` | Mission watcher poll interval (seconds) |
 | `DEVFLEET_SCHEDULER_INTERVAL` | `60` | Scheduler check interval (seconds) |
 | `DEVFLEET_CONTEXT_MODE_CMD` | `context-mode` | Path to context-mode binary |
+| `DEVFLEET_PROJECTS_DIR` | `projects/` | Base directory for planner-created projects |
 | `DEVFLEET_PATH_MAP_*` | — | Host:container path translation |
 
 ## Contributing

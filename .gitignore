@@ -17,5 +17,8 @@ venv/
 
 .devfleet-worktrees/
 
+# User-created projects (via planner)
+projects/
+
 # Event / demo materials
 event/

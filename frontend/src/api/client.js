@@ -198,3 +198,9 @@ export const listIncidents = (filters = {}) => {
 export const createIncident = (data) => request('/incidents', { method: 'POST', body: JSON.stringify(data) });
 export const updateIncident = (id, data) => request(`/incidents/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteIncident = (id) => request(`/incidents/${id}`, { method: 'DELETE' });
+
+// ── Project Planner ──
+export const planProject = (prompt, projectPath) => request('/plan', {
+  method: 'POST',
+  body: JSON.stringify({ prompt, project_path: projectPath || undefined }),
+});

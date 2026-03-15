@@ -417,44 +417,37 @@ export default function MissionDetail({ id, navigate }) {
         </div>
       )}
 
-      {/* Human Input Needed banner — shows after agent completes/fails */}
-      {(mission.status === 'completed' || mission.status === 'failed') && mission.sessions?.length > 0 && (
-        <div className="human-input-banner">
-          <div className="human-input-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-              <line x1="12" y1="9" x2="12" y2="13" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
-          </div>
-          <div className="human-input-content">
-            <div className="human-input-title">Human Input Needed</div>
-            <div className="human-input-text">
-              The agent ran in an <strong>isolated git worktree</strong>. You need to verify and merge its work before it takes effect.
+      {/* Human Input Required — only when agent flagged real blockers */}
+      {mission.latest_report && (() => {
+        const errors = mission.latest_report?.errors_encountered;
+        const hasErrors = errors && errors !== 'None' && errors !== 'N/A' && errors.trim() !== '' && errors.trim().toLowerCase() !== 'none' && errors.trim().toLowerCase() !== 'none.';
+        if (!hasErrors) return null;
+        return (
+          <div className="human-input-banner">
+            <div className="human-input-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
             </div>
-            <div className="human-input-steps">
-              <div className="human-input-step">
-                <span className="human-step-num">1</span>
-                <span>Review the report above — check files changed, errors, and what's untested</span>
+            <div className="human-input-content">
+              <div className="human-input-title">Human Input Required</div>
+              <div className="human-input-text">
+                The agent flagged items that need <strong>manual intervention</strong> before this work is fully functional.
               </div>
-              <div className="human-input-step">
-                <span className="human-step-num">2</span>
-                <span>Merge the worktree branch: <code>git merge devfleet/{'<session-id>'}</code></span>
+              <div style={{
+                margin: '10px 0', padding: '10px 14px', fontSize: 12,
+                background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)',
+                borderRadius: 'var(--radius-sm)', color: 'var(--danger)',
+                fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', lineHeight: 1.6,
+              }}>
+                {errors}
               </div>
-              <div className="human-input-step">
-                <span className="human-step-num">3</span>
-                <span>Run tests and verify the changes work on your machine</span>
-              </div>
-              {mission.status === 'failed' && (
-                <div className="human-input-step">
-                  <span className="human-step-num">4</span>
-                  <span>If the agent failed, click <strong>Resume</strong> to continue with full context, or fix manually</span>
-                </div>
-              )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {mission.sessions && mission.sessions.length > 0 && (
         <div className="section">

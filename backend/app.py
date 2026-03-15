@@ -771,6 +771,43 @@ async def api_autoloop_status(project_id: str):
 
 
 # ──────────────────────────────────────────────
+# Project Planner — One-prompt project creation
+# ──────────────────────────────────────────────
+
+from planner import plan_project
+
+class PlanRequest(BaseModel):
+    prompt: str
+    project_path: str | None = None  # auto-generate if not provided
+
+@app.post("/api/plan", status_code=201)
+async def api_plan_project(body: PlanRequest):
+    """Take a natural language prompt, plan a project with chained missions."""
+    # Auto-generate project path if not provided
+    project_path = body.project_path
+    if not project_path:
+        # Derive from prompt — take first few words, slugify
+        # Store in projects/ dir inside DevFleet install (works for any user)
+        import re
+        slug = re.sub(r'[^a-z0-9]+', '-', body.prompt.lower().strip())[:40].strip('-')
+        # Use DEVFLEET_PROJECTS_DIR if set (useful in Docker), otherwise derive from install root
+        projects_base = os.environ.get("DEVFLEET_PROJECTS_DIR")
+        if not projects_base:
+            devfleet_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            projects_base = os.path.join(devfleet_root, "projects")
+        project_path = os.path.join(projects_base, slug)
+
+    try:
+        result = await plan_project(body.prompt, project_path)
+        return result
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        log.exception("Plan failed")
+        raise HTTPException(500, f"Planning failed: {e}")
+
+
+# ──────────────────────────────────────────────
 # Remote Control — Take over sessions from phone/browser
 # ──────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getDashboardStats, getSystemStatus } from '../api/client';
+import { getDashboardStats, getSystemStatus, planProject } from '../api/client';
 import StatsCard from '../components/StatsCard';
 import StatusBadge from '../components/StatusBadge';
 
@@ -51,6 +51,9 @@ export default function Dashboard({ navigate }) {
   const [sysStatus, setSysStatus] = useState(null);
   const [error, setError] = useState(null);
   const [clock, setClock] = useState(formatDateTime());
+  const [planPrompt, setPlanPrompt] = useState('');
+  const [planning, setPlanning] = useState(false);
+  const [planResult, setPlanResult] = useState(null);
 
   const load = async () => {
     try {
@@ -266,6 +269,146 @@ export default function Dashboard({ navigate }) {
           {mbs.failed > 0 && <StatsCard label="Failed" value={mbs.failed} icon={ICONS.failed} color="var(--danger)" trend="down" />}
         </div>
       )}
+
+      {/* ── AI Planner ── */}
+      <div style={{
+        marginBottom: 28,
+        padding: '20px 24px',
+        background: 'linear-gradient(135deg, rgba(123,97,255,0.06) 0%, rgba(59,130,246,0.04) 100%)',
+        border: '1px solid rgba(123,97,255,0.15)',
+        borderRadius: 'var(--radius-lg, 12px)',
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent-text)', marginBottom: 10 }}>
+          Plan a Project
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
+          Describe what you want to build. AI will create the project and break it into dependent missions automatically.
+        </p>
+        <form onSubmit={async (e) => {
+          e.preventDefault();
+          if (!planPrompt.trim() || planning) return;
+          setPlanning(true);
+          setPlanResult(null);
+          setError(null);
+          try {
+            const result = await planProject(planPrompt.trim());
+            setPlanResult(result);
+            setPlanPrompt('');
+            load(); // refresh stats
+          } catch (e) {
+            setError(e.message);
+          } finally {
+            setPlanning(false);
+          }
+        }} style={{ display: 'flex', gap: 10 }}>
+          <input
+            className="form-input"
+            value={planPrompt}
+            onChange={e => setPlanPrompt(e.target.value)}
+            placeholder="Build a task management REST API with Node.js, Express, CRUD endpoints, and tests..."
+            disabled={planning}
+            style={{
+              flex: 1,
+              fontSize: 14,
+              padding: '12px 16px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--bg-input)',
+              border: '1px solid var(--border)',
+            }}
+          />
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={planning || !planPrompt.trim()}
+            style={{
+              padding: '12px 24px',
+              fontSize: 14,
+              fontWeight: 600,
+              borderRadius: 'var(--radius-md)',
+              whiteSpace: 'nowrap',
+              minWidth: 120,
+            }}
+          >
+            {planning ? (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="loading-spinner" style={{ width: 16, height: 16 }} />
+                Planning...
+              </span>
+            ) : (
+              'Plan & Create'
+            )}
+          </button>
+        </form>
+
+        {/* Plan Result */}
+        {planResult && (
+          <div style={{
+            marginTop: 16,
+            padding: '16px 20px',
+            background: 'rgba(34,197,94,0.06)',
+            border: '1px solid rgba(34,197,94,0.2)',
+            borderRadius: 'var(--radius-md)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div>
+                <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--success)' }}>
+                  {planResult.project.name}
+                </span>
+                <span style={{ fontSize: 13, color: 'var(--text-muted)', marginLeft: 10 }}>
+                  {planResult.project.description}
+                </span>
+              </div>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  navigate('project', planResult.project.id);
+                  setPlanResult(null);
+                }}
+                style={{ padding: '6px 16px', fontSize: 12, fontWeight: 600 }}
+              >
+                Open Project
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {planResult.missions.map((m, i) => (
+                <div key={m.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  fontSize: 13, color: 'var(--text-secondary)',
+                }}>
+                  <span style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                    color: 'var(--accent-text)', minWidth: 24,
+                  }}>
+                    #{m.mission_number}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>{m.title}</span>
+                  {m.depends_on.length > 0 && (
+                    <span style={{
+                      fontSize: 10, padding: '1px 6px',
+                      background: 'rgba(123,97,255,0.08)', color: 'var(--accent-text)',
+                      borderRadius: 'var(--radius-full)', fontWeight: 600,
+                    }}>
+                      depends on #{planResult.missions.find(d => d.id === m.depends_on[0])?.mission_number || '?'}
+                    </span>
+                  )}
+                  {m.auto_dispatch && (
+                    <span style={{
+                      fontSize: 10, padding: '1px 6px',
+                      background: 'rgba(34,197,94,0.08)', color: 'var(--success)',
+                      borderRadius: 'var(--radius-full)', fontWeight: 600,
+                    }}>
+                      auto-dispatch
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 10 }}>
+              Dispatch Mission #1 to start the chain. The rest will auto-dispatch as dependencies complete.
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* ── Quick Actions ── */}
       <div style={{
