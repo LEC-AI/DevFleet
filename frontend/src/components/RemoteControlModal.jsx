@@ -350,9 +350,9 @@ const ms = {
 };
 
 const steps = [
-  { num: '1', text: 'Scan QR code with your phone camera' },
-  { num: '2', text: 'Opens in Claude app or browser' },
-  { num: '3', text: 'Take over the session live' },
+  { num: '1', text: 'Scan QR or open link in browser' },
+  { num: '2', text: 'Type "go" to start the mission' },
+  { num: '3', text: 'Agent works with full mission context' },
 ];
 
 export default function RemoteControlModal({ url, onClose }) {
@@ -442,13 +442,10 @@ export default function RemoteControlModal({ url, onClose }) {
           ))}
         </div>
 
-        {/* Security note */}
-        <div style={ms.note}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-          </svg>
-          Your files stay local. Session routes through Anthropic's API over TLS.
+        {/* Hint */}
+        <div style={{...ms.note, background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)'}}>
+          <span style={{ fontSize: 13 }}>💡</span>
+          Type <strong style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>"go"</strong> or <strong style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>"start"</strong> — the mission context is pre-loaded.
         </div>
 
         {/* Actions */}

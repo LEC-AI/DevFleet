@@ -16,3 +16,6 @@ venv/
 .DS_Store
 
 .devfleet-worktrees/
+
+# Event / demo materials
+event/

@@ -43,6 +43,11 @@ export default function MissionCard({ mission, onClick }) {
               </svg>
             </span>
           )}
+          {mission.mission_number && (
+            <span style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, flexShrink: 0, fontFamily: 'var(--font-mono)' }}>
+              #{mission.mission_number}
+            </span>
+          )}
           <span>{mission.title}</span>
         </div>
         <div className="mission-card-meta">

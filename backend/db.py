@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS missions (
     auto_dispatch INTEGER DEFAULT 0,
     schedule_cron TEXT,
     schedule_enabled INTEGER DEFAULT 0,
-    last_scheduled_at TEXT
+    last_scheduled_at TEXT,
+    mission_number INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -168,12 +169,24 @@ async def init_db():
             "ALTER TABLE missions ADD COLUMN schedule_cron TEXT",
             "ALTER TABLE missions ADD COLUMN schedule_enabled INTEGER DEFAULT 0",
             "ALTER TABLE missions ADD COLUMN last_scheduled_at TEXT",
+            "ALTER TABLE missions ADD COLUMN mission_number INTEGER",
         ]
         for migration in migrations:
             try:
                 await db.execute(migration)
             except Exception:
                 pass  # Column already exists
+
+        # Backfill mission_number for existing missions that don't have one
+        # Use a CTE with ROW_NUMBER to assign sequential numbers per project
+        await db.execute("""
+            UPDATE missions SET mission_number = (
+                SELECT rn FROM (
+                    SELECT id, ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY created_at, id) AS rn
+                    FROM missions
+                ) numbered WHERE numbered.id = missions.id
+            ) WHERE mission_number IS NULL
+        """)
         await db.commit()
 
 

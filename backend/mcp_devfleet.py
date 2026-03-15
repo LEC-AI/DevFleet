@@ -55,20 +55,45 @@ async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="submit_report",
-            description="Submit a structured end-of-mission report to DevFleet. Call this when your work is complete.",
+            description=(
+                "Submit a structured end-of-mission report to DevFleet. Call this when your work is complete. "
+                "Your report feeds into the next agent's context — be precise and actionable. "
+                "Flag any blockers that need human intervention (sudo, API keys, DNS, etc)."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "files_changed": {"type": "string", "description": "List of files created/modified/deleted"},
-                    "what_done": {"type": "string", "description": "What you completed"},
-                    "what_open": {"type": "string", "description": "What remains (or 'None')"},
-                    "what_tested": {"type": "string", "description": "Tests run and results"},
-                    "what_untested": {"type": "string", "description": "Areas lacking coverage (or 'None')"},
-                    "next_steps": {"type": "string", "description": "Recommendations for next session (or 'None')"},
-                    "errors_encountered": {"type": "string", "description": "Errors or blockers (or 'None')"},
-                    "preview_url": {"type": "string", "description": "Preview URL or 'None'"},
+                    "files_changed": {
+                        "type": "string",
+                        "description": "List every file created/modified/deleted with one-line descriptions. Example: 'src/api.py (created) — REST API with /users endpoint'",
+                    },
+                    "what_done": {
+                        "type": "string",
+                        "description": "Bullet list of what you accomplished. Be specific — mention function names, endpoints, components. Another agent should know exactly what exists now.",
+                    },
+                    "what_open": {
+                        "type": "string",
+                        "description": "What remains to complete the full mission. Be honest about half-done work. Say 'None' if everything is done.",
+                    },
+                    "what_tested": {
+                        "type": "string",
+                        "description": "Exactly what you verified works — include commands run and results. Example: 'Ran npm test — 12 tests pass'. If no tests, say 'Manual verification only' and explain what you checked.",
+                    },
+                    "what_untested": {
+                        "type": "string",
+                        "description": "What you did NOT verify — edge cases, error handling, cross-browser, performance, etc. The next agent/human needs to know what to check.",
+                    },
+                    "next_steps": {
+                        "type": "string",
+                        "description": "Specific actionable recommendations for the NEXT mission/agent. Frame as mission titles. Example: 'Add authentication middleware — JWT tokens for /users'. Say 'None — mission complete' if fully done.",
+                    },
+                    "errors_encountered": {
+                        "type": "string",
+                        "description": "Errors, blockers, or issues needing HUMAN attention — permission issues, sudo commands needed, API keys required, services to start, DNS changes. Example: 'BLOCKER: Need sudo systemctl restart nginx'. Say 'None' if no blockers.",
+                    },
+                    "preview_url": {"type": "string", "description": "Preview URL (http://localhost:4321) or 'None — no UI'"},
                 },
-                "required": ["files_changed", "what_done", "what_open"],
+                "required": ["files_changed", "what_done", "what_open", "what_tested", "what_untested", "next_steps", "errors_encountered"],
             },
         ),
         types.Tool(

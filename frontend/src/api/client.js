@@ -41,8 +41,8 @@ export const resumeMission = (id, opts = null) =>
 // ── Mission Children, Events & Scheduling ──
 export const getMissionChildren = (id) => request(`/missions/${id}/children`);
 export const getMissionEvents = (id) => request(`/missions/${id}/events`);
-export const setMissionSchedule = (id, cron_expression) =>
-  request(`/missions/${id}/schedule`, { method: 'POST', body: JSON.stringify({ cron_expression }) });
+export const setMissionSchedule = (id, cron) =>
+  request(`/missions/${id}/schedule`, { method: 'POST', body: JSON.stringify({ cron, enabled: true }) });
 export const removeMissionSchedule = (id) =>
   request(`/missions/${id}/schedule`, { method: 'DELETE' });
 export const listSchedules = () => request('/schedules');
@@ -116,8 +116,40 @@ export const getAutoLoopStatus = (projectId) =>
   request(`/autoloop/status/${projectId}`);
 
 // ── Remote Control ──
+export function streamRemoteSession(sessionId, { onText, onBackfill, onDone, onError }) {
+  const evtSource = new EventSource(`${API}/sessions/${sessionId}/remote-stream`);
+
+  evtSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'done') {
+        onDone?.(data);
+        evtSource.close();
+      } else if (data.type === 'backfill') {
+        onBackfill?.(data.text);
+      } else if (data.type === 'text') {
+        onText?.(data.text);
+      } else if (data.type === 'error') {
+        onError?.(data.text);
+        evtSource.close();
+      }
+    } catch (err) {
+      console.error('Remote SSE parse error:', err);
+    }
+  };
+
+  evtSource.onerror = (e) => {
+    onError?.(e);
+    evtSource.close();
+  };
+
+  return () => evtSource.close();
+}
+
 export const startRemoteControl = (sessionId) =>
   request(`/sessions/${sessionId}/remote-control`, { method: 'POST' });
+export const takeoverSession = (sessionId) =>
+  request(`/sessions/${sessionId}/takeover`, { method: 'POST' });
 export const startMissionRemoteControl = (missionId) =>
   request(`/missions/${missionId}/remote-control`, { method: 'POST' });
 export const stopRemoteControl = (sessionId) =>

@@ -63,6 +63,8 @@ log = logging.getLogger("devfleet.sdk_engine")
 running_tasks: dict[str, asyncio.Task] = {}
 _subscribers: dict[str, list[asyncio.Queue]] = {}
 _event_buffers: dict[str, list[dict]] = {}
+# Sessions being taken over — worktree is preserved on cancel
+_takeover_sessions: set[str] = {}
 
 
 # ── MCP Server Integration (Phase 2) ──
@@ -507,31 +509,36 @@ async def _run_agent(
         log.info("Session %s completed (cost $%.4f, tokens %d)", session_id, total_cost, total_tokens)
 
     except asyncio.CancelledError:
-        log.info("Session %s cancelled", session_id)
+        is_takeover = session_id in _takeover_sessions
+        _takeover_sessions.discard(session_id)
+        log.info("Session %s %s", session_id, "taken over" if is_takeover else "cancelled")
         ended_at = datetime.now(timezone.utc).isoformat()
         full_output = "".join(output_chunks)
         if existing_output:
             full_output = existing_output + "\n--- RESUMED ---\n" + full_output
 
+        new_status = "takeover" if is_takeover else "cancelled"
+        mission_status = "running" if is_takeover else "failed"
         conn = await db.get_db()
         try:
             await conn.execute(
-                """UPDATE agent_sessions SET status='cancelled', ended_at=?, output_log=?,
+                """UPDATE agent_sessions SET status=?, ended_at=?, output_log=?,
                        total_cost_usd=?, total_tokens=?
                    WHERE id=?""",
-                (ended_at, full_output, total_cost, total_tokens, session_id),
+                (new_status, ended_at, full_output, total_cost, total_tokens, session_id),
             )
             await conn.execute(
-                "UPDATE missions SET status='failed', updated_at=? WHERE id=?",
-                (ended_at, mission["id"]),
+                "UPDATE missions SET status=?, updated_at=? WHERE id=?",
+                (mission_status, ended_at, mission["id"]),
             )
             await conn.commit()
         finally:
             await conn.close()
 
-        if worktree_path:
+        if worktree_path and not is_takeover:
+            # Only delete worktree on regular cancel, NOT on takeover
             await cleanup_worktree(project_path, session_id, merge=False)
-        _broadcast(session_id, {"type": "done", "status": "cancelled"})
+        _broadcast(session_id, {"type": "done", "status": new_status})
 
     except Exception as e:
         log.exception("Session %s error: %s", session_id, e)
@@ -634,10 +641,98 @@ async def resume_mission(
 async def cancel_session(session_id: str) -> bool:
     """Cancel a running session."""
     task = running_tasks.get(session_id)
-    if not task or task.done():
-        return False
-    task.cancel()
-    return True
+    if task and not task.done():
+        task.cancel()
+        return True
+
+    # Task not in memory (e.g. after backend restart) — update DB directly
+    conn = await db.get_db()
+    try:
+        row = await conn.execute_fetchall(
+            "SELECT status, mission_id FROM agent_sessions WHERE id=?", (session_id,),
+        )
+        if not row:
+            return False
+        data = dict(row[0])
+        if data["status"] not in ("running", "takeover"):
+            return False
+        # Mark session as cancelled
+        await conn.execute(
+            "UPDATE agent_sessions SET status='cancelled', ended_at=datetime('now') WHERE id=?",
+            (session_id,),
+        )
+        # Mark mission as failed
+        await conn.execute(
+            "UPDATE missions SET status='failed', updated_at=datetime('now') WHERE id=? AND status='running'",
+            (data["mission_id"],),
+        )
+        await conn.commit()
+        log.info("Force-cancelled orphaned session %s (no task in memory)", session_id)
+        return True
+    finally:
+        await conn.close()
+
+
+async def takeover_session(session_id: str) -> dict | None:
+    """Take over a running session: cancel the agent but preserve the worktree.
+
+    Returns dict with {work_dir, output_log, claude_session_id} or None if not found.
+    Handles both live tasks and orphaned sessions (after backend restart).
+    """
+    task = running_tasks.get(session_id)
+    if task and not task.done():
+        # Live task — cancel it gracefully, preserving worktree
+        _takeover_sessions.add(session_id)
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
+        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+            pass
+
+    # Retrieve the saved session data
+    conn = await db.get_db()
+    try:
+        rows = await conn.execute_fetchall(
+            """SELECT s.status, s.output_log, s.claude_session_id, s.total_cost_usd, s.total_tokens,
+                      m.project_id, m.id AS mission_id, p.path AS project_path
+               FROM agent_sessions s
+               JOIN missions m ON m.id = s.mission_id
+               JOIN projects p ON p.id = m.project_id
+               WHERE s.id=?""",
+            (session_id,),
+        )
+        if not rows:
+            return None
+        data = dict(rows[0])
+
+        # Only allow takeover of running/takeover sessions
+        if data["status"] not in ("running", "takeover"):
+            return None
+
+        # Update session status to takeover
+        await conn.execute(
+            "UPDATE agent_sessions SET status='takeover', ended_at=datetime('now') WHERE id=?",
+            (session_id,),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    from app import resolve_path
+    project_path = resolve_path(data["project_path"])
+    short_id = session_id[:8]
+    worktree_path = os.path.join(project_path, ".devfleet-worktrees", f"session-{short_id}")
+
+    # Check if worktree exists
+    work_dir = worktree_path if os.path.isdir(worktree_path) else project_path
+
+    return {
+        "work_dir": work_dir,
+        "output_log": data.get("output_log", ""),
+        "claude_session_id": data.get("claude_session_id", ""),
+        "total_cost_usd": data.get("total_cost_usd", 0),
+        "total_tokens": data.get("total_tokens", 0),
+    }
 
 
 def _parse_report_from_text(output: str) -> dict | None:

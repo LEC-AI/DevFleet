@@ -10,7 +10,7 @@ export default function MissionBoard({ navigate }) {
   const [activeTab, setActiveTab] = useState('all');
   const [filterProject, setFilterProject] = useState('');
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ project_id: '', title: '', detailed_prompt: '', acceptance_criteria: '', priority: 0, tags: '', model: 'claude-opus-4-6', mission_type: 'implement' });
+  const [form, setForm] = useState({ project_id: '', title: '', detailed_prompt: '', acceptance_criteria: '', priority: 0, tags: '', model: 'claude-opus-4-6', mission_type: 'implement', auto_dispatch: false, schedule_cron: '', depends_on: '' });
   const [error, setError] = useState(null);
 
   const load = async () => {
@@ -41,8 +41,18 @@ export default function MissionBoard({ navigate }) {
     e.preventDefault();
     try {
       const tags = form.tags ? form.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-      await createMission({ ...form, priority: Number(form.priority), tags });
-      setForm({ project_id: '', title: '', detailed_prompt: '', acceptance_criteria: '', priority: 0, tags: '', model: 'claude-opus-4-6', mission_type: 'implement' });
+      const depends_on = form.depends_on ? form.depends_on.split(',').map(t => t.trim()).filter(Boolean) : [];
+      const payload = {
+        ...form,
+        priority: Number(form.priority),
+        tags,
+        auto_dispatch: form.auto_dispatch ? 1 : 0,
+        schedule_cron: form.schedule_cron || null,
+        depends_on,
+      };
+      delete payload.depends_on_text;
+      await createMission(payload);
+      setForm({ project_id: '', title: '', detailed_prompt: '', acceptance_criteria: '', priority: 0, tags: '', model: 'claude-opus-4-6', mission_type: 'implement', auto_dispatch: false, schedule_cron: '', depends_on: '' });
       setShowModal(false);
       load();
     } catch (e) {
@@ -149,6 +159,74 @@ export default function MissionBoard({ navigate }) {
                   <input className="form-input" value={form.tags} onChange={e => setForm({ ...form, tags: e.target.value })} placeholder="backend, auth" />
                 </div>
               </div>
+              {/* Automation Section */}
+              <div style={{
+                marginTop: 8, padding: '14px 16px',
+                background: 'rgba(123,97,255,0.04)', border: '1px solid rgba(123,97,255,0.1)',
+                borderRadius: 'var(--radius-md)',
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--accent-text)', marginBottom: 12 }}>
+                  Automation
+                </div>
+
+                {/* Auto-Dispatch Toggle */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>Auto-Dispatch</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Automatically dispatch when dependencies are met</div>
+                  </div>
+                  <label style={{ position: 'relative', width: 44, height: 24, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={form.auto_dispatch} onChange={e => setForm({ ...form, auto_dispatch: e.target.checked })}
+                      style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }} />
+                    <span style={{
+                      position: 'absolute', inset: 0, borderRadius: 12,
+                      background: form.auto_dispatch ? 'var(--success)' : 'var(--bg-input)',
+                      border: '1px solid ' + (form.auto_dispatch ? 'var(--success)' : 'var(--border)'),
+                      transition: 'all 0.2s',
+                    }}>
+                      <span style={{
+                        position: 'absolute', top: 2, left: form.auto_dispatch ? 22 : 2,
+                        width: 18, height: 18, borderRadius: '50%', background: 'white',
+                        transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                      }} />
+                    </span>
+                  </label>
+                </div>
+
+                {/* Schedule */}
+                <div className="form-group" style={{ marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <label className="form-label" style={{ margin: 0 }}>Schedule (cron)</label>
+                    {form.schedule_cron && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, padding: '1px 6px',
+                        background: 'rgba(234,179,8,0.1)', color: 'var(--warning)',
+                        borderRadius: 'var(--radius-full)',
+                      }}>{'\u23F0'} SCHEDULED</span>
+                    )}
+                  </div>
+                  <input className="form-input" value={form.schedule_cron}
+                    onChange={e => setForm({ ...form, schedule_cron: e.target.value })}
+                    placeholder="*/30 * * * *  (every 30 min)"
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
+                    Format: min hour day month weekday — e.g. "0 9 * * 1-5" = 9am weekdays
+                  </div>
+                </div>
+
+                {/* Dependencies */}
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Depends On (mission IDs)</label>
+                  <input className="form-input" value={form.depends_on}
+                    onChange={e => setForm({ ...form, depends_on: e.target.value })}
+                    placeholder="Paste mission IDs, comma-separated"
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
+                    This mission won't dispatch until all dependencies complete
+                  </div>
+                </div>
+              </div>
+
               <div className="modal-actions">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary">Create Mission</button>

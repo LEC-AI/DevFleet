@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getMission, updateMission, dispatchMission, deleteMission, generateNextMission, resumeMission, startMissionRemoteControl, stopRemoteControl, listSessions, getMissionEvents } from '../api/client';
+import { getMission, updateMission, dispatchMission, deleteMission, generateNextMission, resumeMission, startMissionRemoteControl, stopRemoteControl, listSessions, getMissionEvents, setMissionSchedule, removeMissionSchedule } from '../api/client';
 import StatusBadge from '../components/StatusBadge';
 import PromptEditor from '../components/PromptEditor';
 import ReportView from '../components/ReportView';
@@ -170,7 +170,14 @@ export default function MissionDetail({ id, navigate }) {
           {editing ? (
             <input className="form-input" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }} />
           ) : (
-            <h2>{mission.title}</h2>
+            <h2>
+              {mission.mission_number && (
+                <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginRight: 8 }}>
+                  #{mission.mission_number}
+                </span>
+              )}
+              {mission.title}
+            </h2>
           )}
           <div className="flex items-center gap-12 mt-16">
             <StatusBadge status={mission.status} />
@@ -309,27 +316,8 @@ export default function MissionDetail({ id, navigate }) {
         </div>
       )}
 
-      {/* Schedule Badge */}
-      {mission.schedule_cron && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '10px 16px', marginBottom: 16,
-          background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.12)',
-          borderRadius: 'var(--radius-md)', fontSize: 13,
-        }}>
-          <span style={{ fontSize: 16 }}>{'\u23F0'}</span>
-          <span style={{ color: 'var(--warning)' }}>Scheduled</span>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>
-            {mission.schedule_cron}
-          </span>
-          <span style={{
-            fontSize: 10, fontWeight: 700, padding: '2px 8px',
-            background: mission.schedule_enabled ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-            color: mission.schedule_enabled ? 'var(--success)' : 'var(--danger)',
-            borderRadius: 'var(--radius-full)',
-          }}>{mission.schedule_enabled ? 'ACTIVE' : 'DISABLED'}</span>
-        </div>
-      )}
+      {/* Automation Panel */}
+      <AutomationPanel mission={mission} editing={canEdit} onUpdate={load} setError={setError} />
 
       {mission.latest_report && (
         <div className="section">
@@ -507,6 +495,174 @@ export default function MissionDetail({ id, navigate }) {
                   </div>
                 </div>
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Automation Panel (Schedule, Auto-Dispatch, Dependencies) ── */
+function AutomationPanel({ mission, editing, onUpdate, setError }) {
+  const [cronInput, setCronInput] = useState(mission.schedule_cron || '');
+  const [saving, setSaving] = useState(false);
+
+  const hasSchedule = !!mission.schedule_cron;
+  const hasAutoDeps = mission.auto_dispatch === 1;
+  const deps = (() => { try { return JSON.parse(mission.depends_on || '[]'); } catch { return []; } })();
+
+  const handleSetSchedule = async () => {
+    if (!cronInput.trim()) return;
+    setSaving(true);
+    try {
+      await setMissionSchedule(mission.id, cronInput.trim());
+      onUpdate();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemoveSchedule = async () => {
+    setSaving(true);
+    try {
+      await removeMissionSchedule(mission.id);
+      setCronInput('');
+      onUpdate();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleAutoDispatch = async () => {
+    try {
+      const { updateMission } = await import('../api/client');
+      await updateMission(mission.id, { auto_dispatch: mission.auto_dispatch === 1 ? 0 : 1 });
+      onUpdate();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const panelStyle = {
+    padding: '16px 18px', marginBottom: 16,
+    background: 'rgba(123,97,255,0.04)',
+    border: '1px solid rgba(123,97,255,0.1)',
+    borderRadius: 'var(--radius-md)',
+  };
+  const headerStyle = {
+    fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+    letterSpacing: '0.06em', color: 'var(--accent-text)', marginBottom: 14,
+    display: 'flex', alignItems: 'center', gap: 8,
+  };
+  const rowStyle = {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 12,
+  };
+
+  return (
+    <div style={panelStyle}>
+      <div style={headerStyle}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+        </svg>
+        Automation
+      </div>
+
+      {/* Auto-Dispatch Toggle */}
+      <div style={rowStyle}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Auto-Dispatch</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {hasAutoDeps ? 'Mission Watcher will auto-dispatch when ready' : 'Dispatch automatically when dependencies are met'}
+          </div>
+        </div>
+        {editing && (
+          <label style={{ position: 'relative', width: 44, height: 24, cursor: 'pointer', flexShrink: 0 }}>
+            <input type="checkbox" checked={mission.auto_dispatch === 1} onChange={handleToggleAutoDispatch}
+              style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }} />
+            <span style={{
+              position: 'absolute', inset: 0, borderRadius: 12,
+              background: mission.auto_dispatch === 1 ? 'var(--success)' : 'var(--bg-input)',
+              border: '1px solid ' + (mission.auto_dispatch === 1 ? 'var(--success)' : 'var(--border)'),
+              transition: 'all 0.2s',
+            }}>
+              <span style={{
+                position: 'absolute', top: 2, left: mission.auto_dispatch === 1 ? 22 : 2,
+                width: 18, height: 18, borderRadius: '50%', background: 'white',
+                transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+              }} />
+            </span>
+          </label>
+        )}
+        {!editing && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, padding: '2px 8px',
+            background: hasAutoDeps ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+            color: hasAutoDeps ? 'var(--success)' : 'var(--danger)',
+            borderRadius: 'var(--radius-full)',
+          }}>{hasAutoDeps ? 'ON' : 'OFF'}</span>
+        )}
+      </div>
+
+      {/* Schedule */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{'\u23F0'} Schedule</span>
+          {hasSchedule && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, padding: '1px 6px',
+              background: mission.schedule_enabled ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+              color: mission.schedule_enabled ? 'var(--success)' : 'var(--danger)',
+              borderRadius: 'var(--radius-full)',
+            }}>{mission.schedule_enabled ? 'ACTIVE' : 'DISABLED'}</span>
+          )}
+        </div>
+        {editing ? (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input className="form-input" value={cronInput}
+              onChange={e => setCronInput(e.target.value)}
+              placeholder="*/30 * * * *"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 12, flex: 1 }} />
+            <button className="btn btn-primary btn-sm" onClick={handleSetSchedule} disabled={saving || !cronInput.trim()}>
+              {saving ? '...' : 'Set'}
+            </button>
+            {hasSchedule && (
+              <button className="btn btn-danger btn-sm" onClick={handleRemoveSchedule} disabled={saving}>
+                Remove
+              </button>
+            )}
+          </div>
+        ) : hasSchedule ? (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>
+            {mission.schedule_cron}
+          </span>
+        ) : (
+          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>Not scheduled</span>
+        )}
+        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
+          min hour day month weekday — e.g. "0 9 * * 1-5" = 9am weekdays
+        </div>
+      </div>
+
+      {/* Dependencies */}
+      {deps.length > 0 && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Dependencies</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {deps.map(depId => (
+              <span key={depId} style={{
+                fontSize: 11, fontFamily: 'var(--font-mono)',
+                padding: '2px 8px', background: 'rgba(59,130,246,0.1)',
+                color: 'var(--info)', borderRadius: 'var(--radius-full)',
+                cursor: 'pointer',
+              }} title={depId}>
+                {depId.substring(0, 8)}...
+              </span>
             ))}
           </div>
         </div>

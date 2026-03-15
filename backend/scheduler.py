@@ -111,12 +111,19 @@ async def _check_schedules():
             tags.append("scheduled")
             tags.append(f"template:{template['id']}")
 
+            # Get next mission number for this project
+            num_rows = await conn.execute_fetchall(
+                "SELECT COALESCE(MAX(mission_number), 0) + 1 AS next_num FROM missions WHERE project_id=?",
+                (template["project_id"],),
+            )
+            next_num = num_rows[0][0] if num_rows else 1
+
             await conn.execute(
                 """INSERT INTO missions
                    (id, project_id, title, detailed_prompt, acceptance_criteria,
                     priority, tags, model, max_turns, max_budget_usd,
-                    allowed_tools, mission_type, parent_mission_id, auto_dispatch)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                    allowed_tools, mission_type, parent_mission_id, auto_dispatch, mission_number)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
                 (new_id, template["project_id"],
                  f"{template['title']} ({now.strftime('%Y-%m-%d %H:%M')})",
                  template["detailed_prompt"],
@@ -128,7 +135,8 @@ async def _check_schedules():
                  template.get("max_budget_usd"),
                  template.get("allowed_tools", ""),
                  template.get("mission_type", "implement"),
-                 template["id"]),
+                 template["id"],
+                 next_num),
             )
 
             # Update last_scheduled_at on template

@@ -196,12 +196,17 @@ async def _create_and_dispatch(project_id: str, task: dict, last_report: dict | 
 
     conn = await db.get_db()
     try:
+        num_rows = await conn.execute_fetchall(
+            "SELECT COALESCE(MAX(mission_number), 0) + 1 AS next_num FROM missions WHERE project_id=?",
+            (project_id,),
+        )
+        next_num = num_rows[0][0] if num_rows else 1
         await conn.execute(
-            """INSERT INTO missions (id, project_id, title, detailed_prompt, acceptance_criteria, priority, tags)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO missions (id, project_id, title, detailed_prompt, acceptance_criteria, priority, tags, mission_number)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (mid, project_id, task["title"], task["detailed_prompt"],
              task.get("acceptance_criteria", ""), task.get("priority", 2),
-             json.dumps(["autoloop"])),
+             json.dumps(["autoloop"]), next_num),
         )
 
         rows = await conn.execute_fetchall(

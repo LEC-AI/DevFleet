@@ -22,13 +22,14 @@ import scheduler
 from autoloop import start_auto_loop, stop_auto_loop, get_auto_loop_status
 from remote_control import (start_remote_control, stop_remote_control,
                             get_remote_status, list_remote_sessions, cleanup_all as cleanup_remote,
-                            RemoteControlNotEnabled)
+                            subscribe_remote_session,
+                            RemoteControlNotEnabled, WorkspaceNotTrusted)
 
 # SDK engine is the new default; fall back to CLI dispatcher if SDK unavailable
 USE_SDK_ENGINE = os.environ.get("DEVFLEET_ENGINE", "sdk").lower() == "sdk"
 if USE_SDK_ENGINE:
     try:
-        from sdk_engine import dispatch_mission, resume_mission, cancel_session, running_tasks
+        from sdk_engine import dispatch_mission, resume_mission, cancel_session, takeover_session, running_tasks
         log_engine = "sdk"
     except ImportError:
         from dispatcher import dispatch_mission, resume_mission, cancel_session, running_tasks
@@ -244,17 +245,24 @@ async def create_mission(body: MissionCreate):
         if not rows:
             raise HTTPException(400, "Project not found")
         mid = str(uuid.uuid4())
+        schedule_enabled = 1 if body.schedule_cron else 0
+        # Get next mission number for this project
+        num_rows = await conn.execute_fetchall(
+            "SELECT COALESCE(MAX(mission_number), 0) + 1 AS next_num FROM missions WHERE project_id=?",
+            (body.project_id,),
+        )
+        next_num = num_rows[0][0] if num_rows else 1
         await conn.execute(
             """INSERT INTO missions (id, project_id, title, detailed_prompt, acceptance_criteria,
                priority, tags, model, max_turns, max_budget_usd, allowed_tools, mission_type,
-               parent_mission_id, depends_on, auto_dispatch, schedule_cron)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               parent_mission_id, depends_on, auto_dispatch, schedule_cron, schedule_enabled, mission_number)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (mid, body.project_id, body.title, body.detailed_prompt,
              body.acceptance_criteria, body.priority, json.dumps(body.tags),
              body.model, body.max_turns, body.max_budget_usd,
              body.allowed_tools or "", body.mission_type,
              body.parent_mission_id, json.dumps(body.depends_on),
-             1 if body.auto_dispatch else 0, body.schedule_cron),
+             1 if body.auto_dispatch else 0, body.schedule_cron, schedule_enabled, next_num),
         )
         await conn.commit()
         row = await conn.execute_fetchall(
@@ -438,13 +446,18 @@ async def generate_next_mission(mid: str):
         # Create the new mission as draft
         new_id = str(uuid.uuid4())
         tags = mission.get("tags", "[]")
+        num_rows = await conn.execute_fetchall(
+            "SELECT COALESCE(MAX(mission_number), 0) + 1 AS next_num FROM missions WHERE project_id=?",
+            (mission["project_id"],),
+        )
+        next_num = num_rows[0][0] if num_rows else 1
         await conn.execute(
-            """INSERT INTO missions (id, project_id, title, detailed_prompt, acceptance_criteria, priority, tags)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO missions (id, project_id, title, detailed_prompt, acceptance_criteria, priority, tags, mission_number)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (new_id, mission["project_id"], new_title,
              "\n".join(prompt_parts),
              "\n".join(criteria_parts) if criteria_parts else "",
-             mission.get("priority", 0), tags),
+             mission.get("priority", 0), tags, next_num),
         )
         await conn.commit()
 
@@ -593,7 +606,7 @@ async def get_session(sid: str):
     conn = await db.get_db()
     try:
         rows = await conn.execute_fetchall(
-            """SELECT s.*, m.title AS mission_title, m.id AS mission_id
+            """SELECT s.*, m.title AS mission_title, m.id AS mission_id, m.mission_number
                FROM agent_sessions s
                JOIN missions m ON m.id = s.mission_id
                WHERE s.id=?""",
@@ -768,8 +781,9 @@ async def start_remote(sid: str):
     conn = await db.get_db()
     try:
         rows = await conn.execute_fetchall(
-            """SELECT s.*, m.title AS mission_title, m.project_id,
-                      p.path AS project_path
+            """SELECT s.*, m.id AS mid, m.title, m.detailed_prompt,
+                      m.acceptance_criteria, m.tags, m.mission_type,
+                      m.project_id, p.path AS project_path
                FROM agent_sessions s
                JOIN missions m ON m.id = s.mission_id
                JOIN projects p ON p.id = m.project_id
@@ -778,24 +792,123 @@ async def start_remote(sid: str):
         )
         if not rows:
             raise HTTPException(404, "Session not found")
-        session = dict(rows[0])
+        row = dict(rows[0])
     finally:
         await conn.close()
 
-    project_path = resolve_path(session["project_path"])
+    project_path = resolve_path(row["project_path"])
+    mission = {
+        "title": row["title"],
+        "detailed_prompt": row.get("detailed_prompt", ""),
+        "acceptance_criteria": row.get("acceptance_criteria"),
+        "tags": row.get("tags"),
+        "mission_type": row.get("mission_type"),
+    }
     try:
         url = await start_remote_control(
             session_id=sid,
-            mission_id=session["mission_id"],
+            mission_id=row["mid"],
             work_dir=project_path,
-            mission_title=session["mission_title"],
+            mission=mission,
         )
-    except RemoteControlNotEnabled as e:
+    except (RemoteControlNotEnabled, WorkspaceNotTrusted) as e:
         raise HTTPException(403, str(e))
     if not url:
         raise HTTPException(500, "Failed to start remote-control — check logs")
 
     return {"url": url, "session_id": sid}
+
+
+@app.post("/api/sessions/{sid}/takeover")
+async def takeover(sid: str):
+    """Take over a running agent: cancel it, preserve its worktree, and start
+    remote-control in the same directory with full context of what the agent did."""
+    if not USE_SDK_ENGINE:
+        raise HTTPException(400, "Takeover only supported with SDK engine")
+
+    # 1. Take over the running session (cancels agent, preserves worktree)
+    result = await takeover_session(sid)
+    if not result:
+        raise HTTPException(404, "Session not running or not found")
+
+    # 2. Get mission details
+    conn = await db.get_db()
+    try:
+        rows = await conn.execute_fetchall(
+            """SELECT m.*, p.path AS project_path
+               FROM agent_sessions s
+               JOIN missions m ON m.id = s.mission_id
+               JOIN projects p ON p.id = m.project_id
+               WHERE s.id=?""",
+            (sid,),
+        )
+        if not rows:
+            raise HTTPException(404, "Session not found")
+        mission = dict(rows[0])
+
+        # 3. Create a new session for the remote-control
+        rc_session_id = str(uuid.uuid4())
+        await conn.execute(
+            "INSERT INTO agent_sessions (id, mission_id, status) VALUES (?, ?, 'remote')",
+            (rc_session_id, mission["id"]),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    # 4. Build agent progress summary from output log
+    output_log = result.get("output_log", "")
+    # Summarize: last ~2000 chars of output + cost info
+    progress_parts = []
+    if result.get("total_cost_usd"):
+        progress_parts.append(f"Agent spent ${result['total_cost_usd']:.4f} and used {result.get('total_tokens', 0)} tokens before takeover.")
+    if output_log:
+        # Get the last meaningful chunk of output
+        trimmed = output_log[-2000:] if len(output_log) > 2000 else output_log
+        progress_parts.append(f"### Last agent output\n```\n{trimmed}\n```")
+
+    # 5. List files changed in the worktree
+    work_dir = result["work_dir"]
+    try:
+        import subprocess
+        diff = subprocess.run(
+            ["git", "diff", "--stat", "HEAD"],
+            cwd=work_dir, capture_output=True, text=True, timeout=5,
+        )
+        if diff.returncode == 0 and diff.stdout.strip():
+            progress_parts.append(f"### Files changed by agent\n```\n{diff.stdout.strip()}\n```")
+        # Also check untracked files
+        status = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=work_dir, capture_output=True, text=True, timeout=5,
+        )
+        if status.returncode == 0 and status.stdout.strip():
+            progress_parts.append(f"### New/modified files\n```\n{status.stdout.strip()}\n```")
+    except Exception as e:
+        log.warning("Failed to get git diff for takeover: %s", e)
+
+    agent_progress = "\n\n".join(progress_parts)
+
+    # 6. Start remote-control in the agent's worktree
+    try:
+        url = await start_remote_control(
+            session_id=rc_session_id,
+            mission_id=mission["id"],
+            work_dir=work_dir,
+            mission=mission,
+            agent_progress=agent_progress,
+        )
+    except (RemoteControlNotEnabled, WorkspaceNotTrusted) as e:
+        raise HTTPException(403, str(e))
+    if not url:
+        raise HTTPException(500, "Failed to start remote-control — check logs")
+
+    return {
+        "url": url,
+        "session_id": rc_session_id,
+        "work_dir": work_dir,
+        "agent_progress": agent_progress[:500],  # Preview for frontend
+    }
 
 
 @app.post("/api/missions/{mid}/remote-control")
@@ -826,20 +939,15 @@ async def start_remote_for_mission(mid: str):
         await conn.close()
 
     project_path = resolve_path(mission["project_path"])
-    # Build mission prompt for the remote session
-    mission_prompt = f"Mission: {mission['title']}\n\n{mission.get('detailed_prompt', '')}"
-    if mission.get("acceptance_criteria"):
-        mission_prompt += f"\n\nAcceptance Criteria:\n{mission['acceptance_criteria']}"
 
     try:
         url = await start_remote_control(
             session_id=session_id,
             mission_id=mid,
             work_dir=project_path,
-            mission_title=mission["title"],
-            prompt=mission_prompt,
+            mission=mission,
         )
-    except RemoteControlNotEnabled as e:
+    except (RemoteControlNotEnabled, WorkspaceNotTrusted) as e:
         # Cleanup the session and reset mission status
         conn = await db.get_db()
         try:
@@ -890,6 +998,12 @@ async def stop_remote(sid: str):
             (now, sid),
         )
         mid = row[0]["mission_id"]
+        # Also clean up any other orphaned remote sessions for this mission
+        await conn.execute(
+            "UPDATE agent_sessions SET status='completed', ended_at=? "
+            "WHERE mission_id=? AND status='remote' AND ended_at IS NULL",
+            (now, mid),
+        )
         # Only reset mission if it's still in 'running' state
         mission_row = await conn.execute_fetchall(
             "SELECT status FROM missions WHERE id=?", (mid,)
@@ -916,6 +1030,16 @@ async def remote_status(sid: str):
 async def list_remote():
     """List all active remote-control sessions."""
     return list_remote_sessions()
+
+
+@app.get("/api/sessions/{sid}/remote-stream")
+async def stream_remote(sid: str):
+    """SSE stream of live remote-control process output."""
+    async def event_stream():
+        async for event in subscribe_remote_session(sid):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ──────────────────────────────────────────────
