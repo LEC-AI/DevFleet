@@ -99,6 +99,46 @@ MAX_CONCURRENT_AGENTS = int(os.environ.get("DEVFLEET_MAX_AGENTS", "3"))
 
 
 # ──────────────────────────────────────────────
+# MCP Server — External integration endpoint
+# ──────────────────────────────────────────────
+# Any MCP-compatible client (Claude Code, Cursor, Windsurf, etc.)
+# can connect to DevFleet via:
+#   { "type": "sse", "url": "http://localhost:18801/mcp/sse" }
+
+from mcp.server.sse import SseServerTransport
+from mcp_external import server as mcp_server
+from starlette.requests import Request as StarletteRequest
+from starlette.routing import Route, Mount
+
+_mcp_sse = SseServerTransport("/messages/")
+
+
+async def _handle_mcp_sse(request: StarletteRequest):
+    """SSE stream endpoint for MCP clients."""
+    async with _mcp_sse.connect_sse(
+        request.scope, request.receive, request._send
+    ) as streams:
+        await mcp_server.run(
+            streams[0], streams[1],
+            mcp_server.create_initialization_options(),
+        )
+
+
+async def _handle_mcp_post(request: StarletteRequest):
+    """Handles MCP JSON-RPC messages from clients."""
+    await _mcp_sse.handle_post_message(
+        request.scope, request.receive, request._send
+    )
+
+
+# Mount as Starlette routes (SSE needs raw ASGI scope/receive/send)
+app.mount("/mcp", Mount(path="/", routes=[
+    Route("/sse", endpoint=_handle_mcp_sse),
+    Route("/messages/", endpoint=_handle_mcp_post, methods=["POST"]),
+]))
+
+
+# ──────────────────────────────────────────────
 # Projects
 # ──────────────────────────────────────────────
 

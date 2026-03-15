@@ -160,6 +160,56 @@ Every dispatched agent automatically gets two stdio MCP servers attached:
 
 **Per-Project MCP Servers** — Configure additional MCP servers per project via the API. These are merged with the built-in servers at dispatch time.
 
+### MCP Integration — Use DevFleet from Any Agent
+
+DevFleet itself is an MCP server. Any MCP-compatible client (Claude Code, Cursor, Windsurf, Cline, custom agents) can connect and use DevFleet as a tool:
+
+```json
+{
+  "devfleet": {
+    "type": "sse",
+    "url": "http://localhost:18801/mcp/sse"
+  }
+}
+```
+
+**Available tools:**
+
+| Tool | Description |
+|------|-------------|
+| `plan_project` | One-prompt project creation — AI breaks your description into chained missions |
+| `create_project` | Create a project manually |
+| `create_mission` | Add a mission with dependencies, auto-dispatch, priority |
+| `dispatch_mission` | Send an agent to work on a mission |
+| `get_mission_status` | Check progress of any mission |
+| `get_report` | Read the structured report (what's done, tested, errors, next steps) |
+| `list_projects` | Browse all projects |
+| `list_missions` | List missions in a project, filter by status |
+
+**Example — Claude Code:**
+```bash
+# Add to your Claude Code MCP config
+claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse
+
+# Now you can say:
+# "Use devfleet to plan a project: build a REST API with auth and tests"
+# "Check the status of my devfleet missions"
+# "Dispatch mission #1 in devfleet"
+```
+
+**Example — Cursor / Windsurf / Cline:**
+
+Add to your MCP settings (usually `.cursor/mcp.json` or IDE settings):
+```json
+{
+  "mcpServers": {
+    "devfleet": {
+      "url": "http://localhost:18801/mcp/sse"
+    }
+  }
+}
+```
+
 ### Context Mode
 
 Optional [context-mode](https://github.com/mksglu/context-mode) integration for long-running missions. When enabled at dispatch time, agents get context-mode's MCP server attached, providing:
@@ -230,6 +280,9 @@ Take over any agent session from your phone or browser:
 | `frontend/src/api/client.js` | API client + SSE streaming |
 
 ## API Endpoints
+
+### MCP Server
+- `GET /mcp/sse` — SSE endpoint for MCP clients (tools: plan_project, create_project, create_mission, dispatch_mission, get_mission_status, get_report, list_projects, list_missions)
 
 ### Planner
 - `POST /api/plan` — AI project planner: takes a natural language prompt, returns a project with chained missions
