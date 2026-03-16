@@ -78,7 +78,7 @@ async def lifespan(app):
     # Load plugins (custom tools, hooks, extensions)
     from plugins import load_plugins
     load_plugins()
-    log.info("DevFleet API started — DB initialized at %s (engine: %s)", db.DB_PATH, log_engine)
+    log.info("Claude DevFleet API started — DB initialized at %s (engine: %s)", db.DB_PATH, log_engine)
     yield
     await scheduler.stop_scheduler()
     await mission_watcher.stop_watcher()
@@ -86,10 +86,10 @@ async def lifespan(app):
     for sid, task in list(running_tasks.items()):
         task.cancel()
     await cleanup_remote()
-    log.info("DevFleet API shutting down")
+    log.info("Claude DevFleet API shutting down")
 
 
-app = FastAPI(title="DevFleet API", lifespan=lifespan)
+app = FastAPI(title="Claude DevFleet API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,5 +1,5 @@
 """
-Example DevFleet Plugin — rename to remove the underscore prefix to activate.
+Example Claude DevFleet Plugin — rename to remove the underscore prefix to activate.
 
 This shows how to:
 1. Add custom MCP tools (available to any connected MCP client)
@@ -16,7 +16,7 @@ and any pip-installed package.
 
 
 def register(registry):
-    """Called by DevFleet at startup. Use registry to add tools and hooks."""
+    """Called by Claude DevFleet at startup. Use registry to add tools and hooks."""
 
     # ── Example: Custom MCP tool ──
     # This tool becomes available to any MCP client connected to DevFleet
@@ -33,7 +33,7 @@ def register(registry):
         },
     )
     async def hello_world(args: dict) -> dict:
-        return {"message": f"Hello from DevFleet plugin, {args['name']}!"}
+        return {"message": f"Hello from Claude DevFleet plugin, {args['name']}!"}
 
     # ── Example: Post-completion hook ──
     # Runs after any mission completes successfully.

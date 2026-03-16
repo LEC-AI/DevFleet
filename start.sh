@@ -54,7 +54,7 @@ npm install --silent 2>/dev/null
 cd ..
 
 # Start backend (in venv)
-echo "  Starting DevFleet API on port 18801..."
+echo "  Starting Claude DevFleet API on port 18801..."
 cd backend
 source .venv/bin/activate
 python3 -m uvicorn app:app --host 0.0.0.0 --port 18801 --reload &
@@ -62,7 +62,7 @@ API_PID=$!
 cd ..
 
 # Start frontend
-echo "  Starting DevFleet UI on port 3100..."
+echo "  Starting Claude DevFleet UI on port 3100..."
 cd frontend
 npx vite --port 3100 &
 UI_PID=$!
@@ -70,8 +70,8 @@ cd ..
 
 echo ""
 echo "  +-----------------------------------------+"
-echo "  |  DevFleet UI   -> http://localhost:3100  |"
-echo "  |  DevFleet API  -> http://localhost:18801 |"
+echo "  |  Claude DevFleet UI   -> http://localhost:3100  |"
+echo "  |  Claude DevFleet API  -> http://localhost:18801 |"
 echo "  +-----------------------------------------+"
 echo ""
 echo "  Press Ctrl+C to stop all services."
@@ -79,7 +79,7 @@ echo ""
 
 cleanup() {
     echo ""
-    echo "  Shutting down DevFleet..."
+    echo "  Shutting down Claude DevFleet..."
     kill $API_PID $UI_PID 2>/dev/null
     wait $API_PID $UI_PID 2>/dev/null
     echo "  Done."

@@ -1,4 +1,4 @@
-# DevFleet — Autonomous Coding Agent Platform
+# Claude DevFleet — Autonomous Coding Agent Platform
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -17,11 +17,11 @@ Runs in Docker via `docker-compose.yml` or locally with a Python venv.
 
 ```mermaid
 graph TD
-    subgraph UI["DevFleet UI :3101"]
+    subgraph UI["Claude DevFleet UI :3101"]
         Web["React 19 + Vite"]
     end
 
-    subgraph API["DevFleet API :18801"]
+    subgraph API["Claude DevFleet API :18801"]
         FastAPI["FastAPI + SQLite"]
     end
 
@@ -58,7 +58,7 @@ See the full [architecture evolution diagram](diagrams/devfleet-architecture-evo
 
 ### Dual Engine
 
-DevFleet supports two dispatch engines, selectable via `DEVFLEET_ENGINE`:
+Claude DevFleet supports two dispatch engines, selectable via `DEVFLEET_ENGINE`:
 
 | Engine | Mode | How it works |
 |--------|------|--------------|
@@ -77,7 +77,7 @@ DevFleet supports two dispatch engines, selectable via `DEVFLEET_ENGINE`:
 ### Option A: Local development (recommended)
 
 ```bash
-git clone https://github.com/LEC-AI/DevFleet.git
+git clone https://github.com/LEC-AI/claude-devfleet.git
 cd devfleet
 
 # Backend
@@ -99,7 +99,7 @@ npm install && npm run dev
 ### Option B: Docker
 
 ```bash
-git clone https://github.com/LEC-AI/DevFleet.git
+git clone https://github.com/LEC-AI/claude-devfleet.git
 cd devfleet
 ```
 
@@ -160,9 +160,9 @@ Every dispatched agent automatically gets two stdio MCP servers attached:
 
 **Per-Project MCP Servers** — Configure additional MCP servers per project via the API. These are merged with the built-in servers at dispatch time.
 
-### MCP Integration — Use DevFleet from Any Agent
+### MCP Integration — Use Claude DevFleet from Any Agent
 
-DevFleet itself is an MCP server. Any MCP-compatible client (Claude Code, Cursor, Windsurf, Cline, custom agents) can connect and use DevFleet as a tool:
+Claude DevFleet itself is an MCP server. Any MCP-compatible client (Claude Code, Cursor, Windsurf, Cline, custom agents) can connect and use DevFleet as a tool:
 
 ```json
 {
@@ -215,7 +215,7 @@ Add to your MCP settings (usually `.cursor/mcp.json` or IDE settings):
 
 ### Plugin System
 
-Extend DevFleet with custom tools, hooks, and integrations. Drop a Python file into `plugins/` and it loads automatically at startup.
+Extend Claude DevFleet with custom tools, hooks, and integrations. Drop a Python file into `plugins/` and it loads automatically at startup.
 
 ```python
 # plugins/slack_notify.py
@@ -316,9 +316,9 @@ Take over any agent session from your phone or browser:
 
 ## API Endpoints
 
-### MCP Server — Use DevFleet from Any Agent
+### MCP Server — Use Claude DevFleet from Any Agent
 
-Connect any MCP-compatible client to DevFleet. Add to your MCP config:
+Connect any MCP-compatible client to Claude DevFleet. Add to your MCP config:
 
 ```json
 {
@@ -430,9 +430,9 @@ docker top devfleet-api | grep claude  # check before restarting
 
 | Service | Port |
 |---------|------|
-| DevFleet UI (Docker) | 3101 |
-| DevFleet UI (local dev) | 3100 |
-| DevFleet API | 18801 |
+| Claude DevFleet UI (Docker) | 3101 |
+| Claude DevFleet UI (local dev) | 3100 |
+| Claude DevFleet API | 18801 |
 | Agent Preview | 4321 |
 
 ## Environment Variables

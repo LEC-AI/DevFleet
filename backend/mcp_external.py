@@ -1,7 +1,7 @@
 """
-DevFleet MCP Server — External integration endpoint.
+Claude DevFleet MCP Server — External integration endpoint.
 
-Exposes DevFleet as an MCP server so any MCP-compatible client
+Exposes Claude DevFleet as an MCP server so any MCP-compatible client
 (Claude Code, Cursor, Windsurf, Cline, custom agents) can:
   - Plan projects from natural language
   - Create projects and missions
@@ -70,7 +70,7 @@ TOOLS = [
     ),
     types.Tool(
         name="create_project",
-        description="Create a new DevFleet project manually.",
+        description="Create a new Claude DevFleet project manually.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -148,7 +148,7 @@ TOOLS = [
     ),
     types.Tool(
         name="list_projects",
-        description="List all DevFleet projects.",
+        description="List all Claude Claude DevFleet projects.",
         inputSchema={
             "type": "object",
             "properties": {},
@@ -202,7 +202,7 @@ TOOLS = [
     types.Tool(
         name="get_dashboard",
         description=(
-            "Get a high-level dashboard of DevFleet: running agents, "
+            "Get a high-level dashboard of Claude DevFleet: running agents, "
             "project count, mission stats, and recent activity."
         ),
         inputSchema={

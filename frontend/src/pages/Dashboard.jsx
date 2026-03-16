@@ -123,7 +123,7 @@ export default function Dashboard({ navigate }) {
             textTransform: 'uppercase',
             marginBottom: 8,
           }}>
-            DevFleet
+            Claude DevFleet
           </p>
           <h2 style={{
             fontSize: 36,

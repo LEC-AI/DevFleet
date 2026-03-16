@@ -86,7 +86,7 @@ async def cleanup_worktree(project_path: str, session_id: str, merge: bool = Fal
         )
         if code == 0 and out.strip():
             code, out, err = await _run(
-                ["git", "merge", "--no-ff", "-m", f"DevFleet: merge session {short_id}", branch_name],
+                ["git", "merge", "--no-ff", "-m", f"Claude DevFleet: merge session {short_id}", branch_name],
                 project_path,
             )
             if code != 0:

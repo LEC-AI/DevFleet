@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-# DevFleet — Autonomous Coding Agent Platform
+# Claude DevFleet — Autonomous Coding Agent Platform
 
 ## What It Is
 Multi-agent coding platform that dispatches Claude Code agents to work on missions (coding tasks). Each agent runs in an isolated git worktree with MCP-powered tools, can create sub-missions for other agents, and coordinates through a dependency-aware dispatch system. Includes a status page / health monitoring system.
@@ -117,6 +117,6 @@ Tool naming in allowed_tools: `mcp__devfleet-context__get_mission_context`, `mcp
 ## Port Map
 | Service | Port |
 |---------|------|
-| DevFleet UI (Docker) | 3101 |
-| DevFleet UI (local dev) | 3100 |
-| DevFleet API | 18801 |
+| Claude DevFleet UI (Docker) | 3101 |
+| Claude DevFleet UI (local dev) | 3100 |
+| Claude DevFleet API | 18801 |
