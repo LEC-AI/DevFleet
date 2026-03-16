@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getDashboardStats, getSystemStatus, planProject } from '../api/client';
+import { getDashboardStats, getSystemStatus, planProject, getPlugins } from '../api/client';
 import StatsCard from '../components/StatsCard';
 import StatusBadge from '../components/StatusBadge';
 
@@ -54,15 +54,19 @@ export default function Dashboard({ navigate }) {
   const [planPrompt, setPlanPrompt] = useState('');
   const [planning, setPlanning] = useState(false);
   const [planResult, setPlanResult] = useState(null);
+  const [plugins, setPlugins] = useState(null);
+  const [mcpCopied, setMcpCopied] = useState(false);
 
   const load = async () => {
     try {
-      const [s, sys] = await Promise.all([
+      const [s, sys, p] = await Promise.all([
         getDashboardStats(),
         getSystemStatus().catch(() => null),
+        getPlugins().catch(() => null),
       ]);
       setStats(s);
       setSysStatus(sys);
+      setPlugins(p);
     } catch (e) {
       setError(e.message);
     }
@@ -109,7 +113,7 @@ export default function Dashboard({ navigate }) {
           position: 'absolute',
           inset: 0,
           backgroundImage:
-            'radial-gradient(circle at 20% 50%, rgba(123,97,255,0.06) 0%, transparent 50%), ' +
+            'radial-gradient(circle at 20% 50%, rgba(218,119,86,0.06) 0%, transparent 50%), ' +
             'radial-gradient(circle at 80% 30%, rgba(59,130,246,0.04) 0%, transparent 40%)',
           pointerEvents: 'none',
         }} />
@@ -274,8 +278,8 @@ export default function Dashboard({ navigate }) {
       <div style={{
         marginBottom: 28,
         padding: '20px 24px',
-        background: 'linear-gradient(135deg, rgba(123,97,255,0.06) 0%, rgba(59,130,246,0.04) 100%)',
-        border: '1px solid rgba(123,97,255,0.15)',
+        background: 'linear-gradient(135deg, rgba(218,119,86,0.06) 0%, rgba(59,130,246,0.04) 100%)',
+        border: '1px solid rgba(218,119,86,0.15)',
         borderRadius: 'var(--radius-lg, 12px)',
       }}>
         <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent-text)', marginBottom: 10 }}>
@@ -385,7 +389,7 @@ export default function Dashboard({ navigate }) {
                   {m.depends_on.length > 0 && (
                     <span style={{
                       fontSize: 10, padding: '1px 6px',
-                      background: 'rgba(123,97,255,0.08)', color: 'var(--accent-text)',
+                      background: 'rgba(218,119,86,0.08)', color: 'var(--accent-text)',
                       borderRadius: 'var(--radius-full)', fontWeight: 600,
                     }}>
                       depends on #{planResult.missions.find(d => d.id === m.depends_on[0])?.mission_number || '?'}
@@ -408,6 +412,163 @@ export default function Dashboard({ navigate }) {
             </p>
           </div>
         )}
+      </div>
+
+      {/* ── MCP Integration + Plugins ── */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: 16,
+        marginBottom: 28,
+      }}>
+        {/* MCP Connection Card */}
+        <div style={{
+          padding: '18px 22px',
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-lg, 12px)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+            </svg>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent-text)' }}>
+              MCP Server
+            </span>
+            <span style={{
+              fontSize: 10, padding: '1px 8px', marginLeft: 'auto',
+              background: 'rgba(34,197,94,0.1)', color: 'var(--success)',
+              borderRadius: 'var(--radius-full)', fontWeight: 600,
+            }}>
+              11 tools
+            </span>
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+            Connect Claude Code, Cursor, or any MCP client to orchestrate agents directly from your IDE.
+          </p>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '8px 12px',
+            background: 'var(--bg-base)',
+            borderRadius: 'var(--radius-sm)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--text-secondary)',
+          }}>
+            <code style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse
+            </code>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText('claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse');
+                setMcpCopied(true);
+                setTimeout(() => setMcpCopied(false), 2000);
+              }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: mcpCopied ? 'var(--success)' : 'var(--text-dim)',
+                fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+              }}
+            >
+              {mcpCopied ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+            {['plan_project', 'dispatch_mission', 'wait_for_mission', 'get_dashboard', 'cancel_mission'].map(t => (
+              <span key={t} style={{
+                fontSize: 9, padding: '2px 6px',
+                background: 'rgba(218,119,86,0.06)', color: 'var(--accent-text)',
+                borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-mono)',
+              }}>{t}</span>
+            ))}
+            <span style={{
+              fontSize: 9, padding: '2px 6px',
+              color: 'var(--text-dim)',
+            }}>+6 more</span>
+          </div>
+        </div>
+
+        {/* Plugins Card */}
+        <div style={{
+          padding: '18px 22px',
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-lg, 12px)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
+            </svg>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent-text)' }}>
+              Plugins
+            </span>
+            <span style={{
+              fontSize: 10, padding: '1px 8px', marginLeft: 'auto',
+              background: plugins?.loaded?.length ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.05)',
+              color: plugins?.loaded?.length ? 'var(--success)' : 'var(--text-dim)',
+              borderRadius: 'var(--radius-full)', fontWeight: 600,
+            }}>
+              {plugins?.loaded?.length || 0} loaded
+            </span>
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+            Extend with custom MCP tools and lifecycle hooks. Drop a <code style={{ fontSize: 11 }}>.py</code> file in <code style={{ fontSize: 11 }}>plugins/</code> to auto-load.
+          </p>
+
+          {plugins?.loaded?.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {plugins.loaded.map(name => (
+                <div key={name} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '6px 10px',
+                  background: 'var(--bg-base)',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: 12,
+                }}>
+                  <span style={{ color: 'var(--success)', fontSize: 10 }}>●</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>{name}</span>
+                </div>
+              ))}
+              {plugins.custom_tools?.length > 0 && (
+                <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                  {plugins.custom_tools.map(t => (
+                    <span key={t.name} style={{
+                      fontSize: 9, padding: '2px 6px',
+                      background: 'rgba(34,197,94,0.06)', color: 'var(--success)',
+                      borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-mono)',
+                    }}>{t.name}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{
+              padding: '10px 14px',
+              background: 'var(--bg-base)',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: 11, color: 'var(--text-dim)',
+              fontFamily: 'var(--font-mono)',
+              lineHeight: 1.6,
+            }}>
+              # plugins/my_plugin.py<br/>
+              def register(registry):<br/>
+              &nbsp;&nbsp;@registry.tool("my_tool", ...)<br/>
+              &nbsp;&nbsp;async def my_tool(args): ...
+            </div>
+          )}
+
+          {plugins?.hooks && Object.keys(plugins.hooks).length > 0 && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+              {Object.entries(plugins.hooks).map(([event, count]) => (
+                <span key={event} style={{
+                  fontSize: 9, padding: '2px 6px',
+                  background: 'rgba(251,191,36,0.08)', color: 'var(--warning)',
+                  borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-mono)',
+                }}>{event} ({count})</span>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Quick Actions ── */}

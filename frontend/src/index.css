@@ -16,11 +16,11 @@
   --border-subtle: rgba(255, 255, 255, 0.03);
   --border-strong: rgba(255, 255, 255, 0.12);
 
-  --accent: #7b61ff;
-  --accent-hover: #6a4fef;
-  --accent-soft: rgba(123, 97, 255, 0.08);
-  --accent-glow: rgba(123, 97, 255, 0.2);
-  --accent-text: #a78bfa;
+  --accent: #da7756;
+  --accent-hover: #c96a4b;
+  --accent-soft: rgba(218, 119, 86, 0.08);
+  --accent-glow: rgba(218, 119, 86, 0.2);
+  --accent-text: #e8956e;
 
   --success: #22c55e;
   --success-soft: rgba(34, 197, 94, 0.1);
@@ -111,7 +111,7 @@ body {
 }
 
 .sidebar-logo span.logo-gradient {
-  background: linear-gradient(135deg, var(--accent), #a78bfa, #38bdf8);
+  background: linear-gradient(135deg, var(--accent), #e8956e, #f0b090);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -950,14 +950,14 @@ body {
 
 /* ── Remote Control Button ── */
 .btn-remote {
-  background: linear-gradient(135deg, #7b61ff 0%, #3b82f6 100%);
+  background: linear-gradient(135deg, #da7756 0%, #e8956e 100%);
   color: white;
   border: none;
 }
 
 .btn-remote:hover {
-  background: linear-gradient(135deg, #6a4fef 0%, #2563eb 100%);
-  box-shadow: 0 0 16px rgba(123, 97, 255, 0.3);
+  background: linear-gradient(135deg, #c96a4b 0%, #da7756 100%);
+  box-shadow: 0 0 16px rgba(218, 119, 86, 0.3);
 }
 
 .btn-remote:disabled {

@@ -162,7 +162,7 @@ export default function MissionBoard({ navigate }) {
               {/* Automation Section */}
               <div style={{
                 marginTop: 8, padding: '14px 16px',
-                background: 'rgba(123,97,255,0.04)', border: '1px solid rgba(123,97,255,0.1)',
+                background: 'rgba(218,119,86,0.04)', border: '1px solid rgba(218,119,86,0.1)',
                 borderRadius: 'var(--radius-md)',
               }}>
                 <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--accent-text)', marginBottom: 12 }}>

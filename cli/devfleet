@@ -1,0 +1,439 @@
+#!/usr/bin/env python3
+"""
+DevFleet CLI — lightweight command-line interface for the DevFleet API.
+
+Setup:
+    ln -s $(pwd)/cli/devfleet /usr/local/bin/devfleet
+    # or
+    export PATH="$PATH:$(pwd)/cli"
+
+Configuration:
+    export DEVFLEET_API_URL=http://localhost:18801   # default
+"""
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+# ── Config ──
+
+API_URL = os.environ.get("DEVFLEET_API_URL", "http://localhost:18801").rstrip("/")
+
+# ── ANSI Colors ──
+
+class C:
+    RESET   = "\033[0m"
+    BOLD    = "\033[1m"
+    DIM     = "\033[2m"
+    RED     = "\033[31m"
+    GREEN   = "\033[32m"
+    YELLOW  = "\033[33m"
+    BLUE    = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN    = "\033[36m"
+    GRAY    = "\033[90m"
+    WHITE   = "\033[97m"
+
+# Disable colors if not a TTY
+if not sys.stdout.isatty():
+    for attr in dir(C):
+        if not attr.startswith("_"):
+            setattr(C, attr, "")
+
+
+def _status_color(status: str) -> str:
+    s = (status or "").lower()
+    if s in ("completed", "done"):
+        return C.GREEN
+    elif s in ("running", "in_progress"):
+        return C.YELLOW
+    elif s in ("failed", "error"):
+        return C.RED
+    elif s in ("draft", "pending", "queued"):
+        return C.GRAY
+    elif s == "cancelled":
+        return C.DIM
+    return C.WHITE
+
+
+# ── HTTP helpers ──
+
+def _request(method: str, path: str, data: dict | None = None) -> dict | list:
+    url = f"{API_URL}{path}"
+    body = json.dumps(data).encode() if data else None
+    headers = {"Content-Type": "application/json"} if data else {}
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode()
+        try:
+            detail = json.loads(err_body).get("detail", err_body)
+        except Exception:
+            detail = err_body
+        print(f"{C.RED}Error {e.code}: {detail}{C.RESET}", file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.URLError as e:
+        print(f"{C.RED}Connection failed: {e.reason}{C.RESET}", file=sys.stderr)
+        print(f"{C.DIM}Is the DevFleet API running at {API_URL}?{C.RESET}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _get(path: str):
+    return _request("GET", path)
+
+
+def _post(path: str, data: dict | None = None):
+    return _request("POST", path, data)
+
+
+# ── Formatters ──
+
+def _trunc(text: str, width: int = 60) -> str:
+    if not text:
+        return ""
+    text = text.replace("\n", " ").strip()
+    return text[:width - 1] + "\u2026" if len(text) > width else text
+
+
+def _mission_line(m: dict, number: int | None = None) -> str:
+    status = m.get("status", "draft")
+    color = _status_color(status)
+    num = f"{C.DIM}#{m.get('mission_number', number or '?')}{C.RESET} " if True else ""
+    mtype = m.get("mission_type", "")
+    mtype_str = f" {C.DIM}[{mtype}]{C.RESET}" if mtype else ""
+    return f"  {num}{C.BOLD}{m.get('title', 'Untitled')}{C.RESET}{mtype_str}  {color}{status}{C.RESET}"
+
+
+# ── Commands ──
+
+def cmd_plan(args):
+    """Plan a new project from a natural language prompt."""
+    payload = {"prompt": args.prompt}
+    if args.path:
+        payload["project_path"] = args.path
+
+    print(f"{C.CYAN}Planning project...{C.RESET}")
+    result = _post("/api/plan", payload)
+
+    project = result.get("project", {})
+    missions = result.get("missions", [])
+
+    print()
+    print(f"  {C.BOLD}{C.GREEN}Project created:{C.RESET} {project.get('name', '?')}")
+    print(f"  {C.DIM}ID:   {project.get('id', '?')}{C.RESET}")
+    print(f"  {C.DIM}Path: {project.get('path', '?')}{C.RESET}")
+    if project.get("description"):
+        print(f"  {C.DIM}{_trunc(project['description'], 80)}{C.RESET}")
+    print()
+
+    if missions:
+        print(f"  {C.BOLD}Missions ({len(missions)}):{C.RESET}")
+        # Build dependency map from depends_on
+        dep_map = {}
+        for i, m in enumerate(missions):
+            deps = m.get("depends_on")
+            if deps:
+                if isinstance(deps, str):
+                    try:
+                        deps = json.loads(deps)
+                    except Exception:
+                        deps = []
+                dep_map[m.get("id")] = deps
+
+        for i, m in enumerate(missions, 1):
+            mid = m.get("id", "")
+            deps = dep_map.get(mid, [])
+            arrow = ""
+            if deps:
+                # Find mission numbers for dependencies
+                dep_nums = []
+                for d in deps:
+                    for j, om in enumerate(missions, 1):
+                        if om.get("id") == d:
+                            dep_nums.append(f"#{om.get('mission_number', j)}")
+                            break
+                if dep_nums:
+                    arrow = f" {C.CYAN}\u2190 depends on {', '.join(dep_nums)}{C.RESET}"
+
+            print(f"  {_mission_line(m, i)}{arrow}")
+        print()
+
+    print(f"  {C.DIM}Dispatch all:  devfleet dispatch <mission_id>{C.RESET}")
+    print()
+
+
+def cmd_projects(args):
+    """List all projects."""
+    projects = _get("/api/projects")
+    if not projects:
+        print(f"{C.DIM}No projects found.{C.RESET}")
+        return
+
+    print()
+    print(f"  {C.BOLD}Projects ({len(projects)}):{C.RESET}")
+    print()
+    for p in projects:
+        desc = _trunc(p.get("description", ""), 50)
+        desc_str = f"  {C.DIM}{desc}{C.RESET}" if desc else ""
+        print(f"  {C.BLUE}{p.get('id', '?')[:8]}{C.RESET}  {C.BOLD}{p.get('name', 'Untitled')}{C.RESET}{desc_str}")
+        if p.get("path"):
+            print(f"           {C.DIM}{p['path']}{C.RESET}")
+    print()
+
+
+def cmd_missions(args):
+    """List missions for a project."""
+    params = f"?project_id={args.project_id}" if args.project_id else ""
+    missions = _get(f"/api/missions{params}")
+    if not missions:
+        print(f"{C.DIM}No missions found.{C.RESET}")
+        return
+
+    print()
+    print(f"  {C.BOLD}Missions ({len(missions)}):{C.RESET}")
+    print()
+    for m in missions:
+        proj = m.get("project_name", "")
+        proj_str = f" {C.DIM}({proj}){C.RESET}" if proj else ""
+        print(f"  {_mission_line(m)}{proj_str}")
+        print(f"           {C.DIM}{m.get('id', '?')[:8]}{C.RESET}")
+    print()
+
+
+def cmd_dispatch(args):
+    """Dispatch a mission to an agent."""
+    payload = {}
+    if args.model:
+        payload["model"] = args.model
+    result = _post(f"/api/missions/{args.mission_id}/dispatch", payload or None)
+    print()
+    print(f"  {C.GREEN}{C.BOLD}Dispatched!{C.RESET}")
+    print(f"  {C.DIM}Session: {result.get('session_id', '?')}{C.RESET}")
+    print(f"  {C.DIM}Model:   {result.get('model', '?')}{C.RESET}")
+    print(f"  {C.DIM}Status:  {C.YELLOW}running{C.RESET}")
+    print()
+
+
+def cmd_status(args):
+    """Show detailed status for a mission."""
+    m = _get(f"/api/missions/{args.mission_id}")
+    status = m.get("status", "draft")
+    color = _status_color(status)
+
+    print()
+    print(f"  {C.BOLD}{m.get('title', 'Untitled')}{C.RESET}")
+    print(f"  {C.DIM}Mission #{m.get('mission_number', '?')} \u2014 {m.get('id', '?')}{C.RESET}")
+    print()
+    print(f"  Status:   {color}{C.BOLD}{status}{C.RESET}")
+    print(f"  Type:     {m.get('mission_type', '?')}")
+    print(f"  Model:    {m.get('model', '?')}")
+    print(f"  Project:  {m.get('project_name', '?')}")
+    if m.get("priority"):
+        print(f"  Priority: {m['priority']}")
+    if m.get("tags"):
+        tags = m["tags"]
+        if isinstance(tags, str):
+            try:
+                tags = json.loads(tags)
+            except Exception:
+                pass
+        if isinstance(tags, list):
+            print(f"  Tags:     {', '.join(tags)}")
+
+    deps = m.get("depends_on")
+    if deps:
+        if isinstance(deps, str):
+            try:
+                deps = json.loads(deps)
+            except Exception:
+                deps = []
+        if deps:
+            print(f"  Depends:  {', '.join(str(d)[:8] for d in deps)}")
+
+    print()
+    if m.get("detailed_prompt"):
+        print(f"  {C.DIM}Prompt:{C.RESET}")
+        for line in m["detailed_prompt"].split("\n")[:8]:
+            print(f"    {C.DIM}{line}{C.RESET}")
+        if m["detailed_prompt"].count("\n") > 8:
+            print(f"    {C.DIM}...{C.RESET}")
+    if m.get("acceptance_criteria"):
+        print(f"  {C.DIM}Acceptance criteria:{C.RESET}")
+        for line in m["acceptance_criteria"].split("\n")[:5]:
+            print(f"    {C.DIM}{line}{C.RESET}")
+    print()
+
+
+def cmd_report(args):
+    """Show the latest report for a mission."""
+    reports = _get(f"/api/reports?mission_id={args.mission_id}")
+    if not reports:
+        print(f"{C.DIM}No reports found for this mission.{C.RESET}")
+        return
+
+    r = reports[0]  # Most recent
+    print()
+    print(f"  {C.BOLD}Report for: {r.get('mission_title', 'Untitled')}{C.RESET}")
+    print(f"  {C.DIM}{r.get('project_name', '')} \u2014 {r.get('created_at', '')}{C.RESET}")
+    print()
+
+    sections = [
+        ("What was done", "what_done", C.GREEN),
+        ("What's open", "what_open", C.YELLOW),
+        ("What was tested", "what_tested", C.CYAN),
+        ("What was NOT tested", "what_untested", C.MAGENTA),
+        ("Next steps", "next_steps", C.BLUE),
+        ("Errors encountered", "errors_encountered", C.RED),
+        ("Files changed", "files_changed", C.DIM),
+    ]
+
+    for label, key, color in sections:
+        val = r.get(key)
+        if val:
+            print(f"  {color}{C.BOLD}{label}:{C.RESET}")
+            for line in str(val).split("\n"):
+                print(f"    {line}")
+            print()
+
+
+def cmd_dashboard(args):
+    """Show dashboard stats."""
+    stats = _get("/api/dashboard/stats")
+
+    missions = stats.get("missions_by_status", {})
+    total_missions = sum(missions.values())
+
+    print()
+    print(f"  {C.BOLD}{C.CYAN}\u2588\u2588 DevFleet Dashboard{C.RESET}")
+    print(f"  {C.DIM}{'=' * 40}{C.RESET}")
+    print()
+    print(f"  {C.BOLD}Projects:{C.RESET}       {stats.get('total_projects', 0)}")
+    print(f"  {C.BOLD}Total Missions:{C.RESET}  {total_missions}")
+    print(f"  {C.BOLD}Running Agents:{C.RESET}  {C.YELLOW}{stats.get('running_agents', 0)}{C.RESET} / {stats.get('max_agents', 3)}")
+    print()
+
+    if missions:
+        print(f"  {C.BOLD}Missions by Status:{C.RESET}")
+        for s, count in sorted(missions.items()):
+            color = _status_color(s)
+            bar = "\u2588" * min(count, 30)
+            print(f"    {color}{s:12s}{C.RESET} {bar} {count}")
+        print()
+
+    recent = stats.get("recent_sessions", [])
+    if recent:
+        print(f"  {C.BOLD}Recent Activity:{C.RESET}")
+        for s in recent[:5]:
+            scolor = _status_color(s.get("status", ""))
+            ts = (s.get("started_at") or "")[:16]
+            print(f"    {scolor}\u25cf{C.RESET} {_trunc(s.get('mission_title', ''), 40):40s}  {C.DIM}{ts}{C.RESET}")
+        print()
+
+
+def cmd_plugins(args):
+    """Show loaded plugins."""
+    data = _get("/api/plugins")
+
+    loaded = data.get("loaded", [])
+    tools = data.get("custom_tools", [])
+    hooks = data.get("hooks", {})
+
+    print()
+    print(f"  {C.BOLD}{C.MAGENTA}Plugins{C.RESET}")
+    print()
+
+    if loaded:
+        print(f"  {C.BOLD}Loaded ({len(loaded)}):{C.RESET}")
+        for name in loaded:
+            print(f"    {C.GREEN}\u25cf{C.RESET} {name}")
+        print()
+    else:
+        print(f"  {C.DIM}No plugins loaded.{C.RESET}")
+        print()
+
+    if tools:
+        print(f"  {C.BOLD}Custom Tools ({len(tools)}):{C.RESET}")
+        for t in tools:
+            desc = _trunc(t.get("description", ""), 50)
+            print(f"    {C.CYAN}{t.get('name', '?')}{C.RESET}  {C.DIM}{desc}{C.RESET}")
+        print()
+
+    if hooks:
+        print(f"  {C.BOLD}Hooks:{C.RESET}")
+        for hook, count in hooks.items():
+            print(f"    {hook}: {count} handler(s)")
+        print()
+
+
+# ── Main ──
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="devfleet",
+        description="DevFleet CLI \u2014 manage agents, missions, and projects",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""\
+{C.DIM}Environment:
+  DEVFLEET_API_URL   API base URL (default: http://localhost:18801){C.RESET}
+""",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    # plan
+    p_plan = sub.add_parser("plan", help="Plan a project from a prompt")
+    p_plan.add_argument("prompt", help="Natural language project description")
+    p_plan.add_argument("--path", help="Project path (auto-generated if omitted)")
+
+    # projects
+    sub.add_parser("projects", help="List all projects")
+
+    # missions
+    p_missions = sub.add_parser("missions", help="List missions")
+    p_missions.add_argument("project_id", nargs="?", default=None, help="Filter by project ID")
+
+    # dispatch
+    p_dispatch = sub.add_parser("dispatch", help="Dispatch a mission to an agent")
+    p_dispatch.add_argument("mission_id", help="Mission ID")
+    p_dispatch.add_argument("--model", help="Override model (e.g. claude-sonnet-4-6)")
+
+    # status
+    p_status = sub.add_parser("status", help="Show mission status")
+    p_status.add_argument("mission_id", help="Mission ID")
+
+    # report
+    p_report = sub.add_parser("report", help="Show latest mission report")
+    p_report.add_argument("mission_id", help="Mission ID")
+
+    # dashboard
+    sub.add_parser("dashboard", help="Show dashboard stats")
+
+    # plugins
+    sub.add_parser("plugins", help="Show loaded plugins")
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(0)
+
+    commands = {
+        "plan": cmd_plan,
+        "projects": cmd_projects,
+        "missions": cmd_missions,
+        "dispatch": cmd_dispatch,
+        "status": cmd_status,
+        "report": cmd_report,
+        "dashboard": cmd_dashboard,
+        "plugins": cmd_plugins,
+    }
+
+    commands[args.command](args)
+
+
+if __name__ == "__main__":
+    main()

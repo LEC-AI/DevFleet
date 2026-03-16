@@ -293,7 +293,7 @@ export default function MissionDetail({ id, navigate }) {
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '10px 16px', marginBottom: 16,
-          background: 'rgba(123,97,255,0.06)', border: '1px solid rgba(123,97,255,0.12)',
+          background: 'rgba(218,119,86,0.06)', border: '1px solid rgba(218,119,86,0.12)',
           borderRadius: 'var(--radius-md)', fontSize: 13,
         }}>
           <span style={{ color: 'var(--accent-text)' }}>Sub-mission of</span>
@@ -543,8 +543,8 @@ function AutomationPanel({ mission, editing, onUpdate, setError }) {
 
   const panelStyle = {
     padding: '16px 18px', marginBottom: 16,
-    background: 'rgba(123,97,255,0.04)',
-    border: '1px solid rgba(123,97,255,0.1)',
+    background: 'rgba(218,119,86,0.04)',
+    border: '1px solid rgba(218,119,86,0.1)',
     borderRadius: 'var(--radius-md)',
   };
   const headerStyle = {

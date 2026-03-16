@@ -40,10 +40,10 @@ const qrStyles = {
   glowRing: {
     padding: 3,
     borderRadius: 24,
-    background: 'linear-gradient(135deg, rgba(34,197,94,0.4), rgba(123,97,255,0.4), rgba(34,197,94,0.4))',
+    background: 'linear-gradient(135deg, rgba(34,197,94,0.4), rgba(218,119,86,0.4), rgba(34,197,94,0.4))',
     backgroundSize: '300% 300%',
     animation: 'rcm-glowPulse 3s ease-in-out infinite, rcm-glowRotate 6s linear infinite',
-    boxShadow: '0 0 30px rgba(34,197,94,0.15), 0 0 60px rgba(123,97,255,0.08)',
+    boxShadow: '0 0 30px rgba(34,197,94,0.15), 0 0 60px rgba(218,119,86,0.08)',
   },
   phoneMockup: {
     background: '#111114',
@@ -80,8 +80,8 @@ const _injectStyles = typeof document !== 'undefined' && (() => {
     s.id = id;
     s.textContent = `
       @keyframes rcm-glowPulse {
-        0%, 100% { box-shadow: 0 0 30px rgba(34,197,94,0.15), 0 0 60px rgba(123,97,255,0.08); }
-        50%      { box-shadow: 0 0 40px rgba(34,197,94,0.3), 0 0 80px rgba(123,97,255,0.15); }
+        0%, 100% { box-shadow: 0 0 30px rgba(34,197,94,0.15), 0 0 60px rgba(218,119,86,0.08); }
+        50%      { box-shadow: 0 0 40px rgba(34,197,94,0.3), 0 0 80px rgba(218,119,86,0.15); }
       }
       @keyframes rcm-glowRotate {
         0%   { background-position: 0% 50%; }
@@ -98,7 +98,7 @@ const _injectStyles = typeof document !== 'undefined' && (() => {
       }
       .rcm-copy-btn:hover {
         background: var(--accent-hover) !important;
-        box-shadow: 0 0 16px rgba(123,97,255,0.3);
+        box-shadow: 0 0 16px rgba(218,119,86,0.3);
       }
       .rcm-open-btn:hover {
         box-shadow: 0 6px 24px rgba(34,197,94,0.35) !important;
@@ -199,7 +199,7 @@ const ms = {
   },
   phoneIconSvg: {
     color: 'var(--accent)',
-    filter: 'drop-shadow(0 0 12px rgba(123,97,255,0.3))',
+    filter: 'drop-shadow(0 0 12px rgba(218,119,86,0.3))',
   },
   title: {
     fontSize: 22,
@@ -277,7 +277,7 @@ const ms = {
     fontSize: 14,
     fontWeight: 700,
     flexShrink: 0,
-    boxShadow: active ? '0 0 16px rgba(123,97,255,0.3)' : 'none',
+    boxShadow: active ? '0 0 16px rgba(218,119,86,0.3)' : 'none',
     transition: 'all 0.2s',
   }),
   stepText: {
@@ -293,7 +293,7 @@ const ms = {
     left: 'calc(50% + 20px)',
     width: 'calc(100% - 40px)',
     height: 2,
-    background: 'linear-gradient(90deg, var(--accent) 0%, rgba(123,97,255,0.2) 100%)',
+    background: 'linear-gradient(90deg, var(--accent) 0%, rgba(218,119,86,0.2) 100%)',
     zIndex: 0,
   },
   note: {

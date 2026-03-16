@@ -204,3 +204,6 @@ export const planProject = (prompt, projectPath) => request('/plan', {
   method: 'POST',
   body: JSON.stringify({ prompt, project_path: projectPath || undefined }),
 });
+
+// ── Plugins ──
+export const getPlugins = () => request('/plugins');

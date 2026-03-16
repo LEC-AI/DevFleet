@@ -285,8 +285,8 @@ export default function StatusPage({ navigate }) {
       text: 'Major Outage',
     },
     no_services: {
-      bg: 'linear-gradient(135deg, rgba(123,97,255,0.08) 0%, rgba(123,97,255,0.02) 100%)',
-      border: 'rgba(123,97,255,0.2)',
+      bg: 'linear-gradient(135deg, rgba(218,119,86,0.08) 0%, rgba(218,119,86,0.02) 100%)',
+      border: 'rgba(218,119,86,0.2)',
       color: 'var(--accent-text)',
       icon: 'M12 5v14M5 12h14',
       text: 'No Services Configured',
