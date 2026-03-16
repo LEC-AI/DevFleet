@@ -39,7 +39,7 @@ graph TD
         A3["Agent"] --> MCP3["MCP Servers"]
     end
 
-    Web -->|"HTTP / SSE"| FastAPI
+    Web -->|"HTTP"| FastAPI
     FastAPI --> SDK
     FastAPI --> Watcher
     FastAPI --> Sched
@@ -74,11 +74,21 @@ Claude DevFleet supports two dispatch engines, selectable via `DEVFLEET_ENGINE`:
 - [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) installed
 - Anthropic API key configured in Claude CLI
 
-### Option A: Local development (recommended)
+### Option A: One-command start (recommended)
 
 ```bash
 git clone https://github.com/LEC-AI/claude-devfleet.git
-cd devfleet
+cd claude-devfleet
+./start.sh
+# UI: http://localhost:3100
+# API: http://localhost:18801
+```
+
+### Option B: Manual local setup
+
+```bash
+git clone https://github.com/LEC-AI/claude-devfleet.git
+cd claude-devfleet
 
 # Backend
 python3 -m venv venv
@@ -96,7 +106,7 @@ npm install && npm run dev
 # API: http://localhost:18801/docs
 ```
 
-### Option B: Docker
+### Option C: Docker
 
 ```bash
 git clone https://github.com/LEC-AI/claude-devfleet.git
@@ -339,7 +349,7 @@ Take over any agent session from your phone or browser:
 | `backend/scheduler.py` | Cron scheduler: evaluates schedules, clones template missions, sets auto_dispatch |
 | `backend/mcp_context.py` | Stdio MCP server: contextual intelligence (mission, project, session, team context) |
 | `backend/mcp_devfleet.py` | Stdio MCP server: agent self-service (submit report, create sub-missions, request review, check sub-mission status) |
-| `backend/mcp_external.py` | SSE MCP server: external integration (plan, dispatch, cancel, wait, dashboard — any MCP client) |
+| `backend/mcp_external.py` | MCP server: external integration (plan, dispatch, cancel, wait, dashboard — Streamable HTTP at `/mcp`, SSE legacy at `/mcp/sse`) |
 | `backend/planner.py` | AI project planner: natural language → project + chained missions via Claude |
 | `backend/autoloop.py` | Auto-loop: parallel-aware plan-dispatch cycle (single or multi-task per iteration) |
 | `backend/dispatcher.py` | CLI engine (fallback): spawns `claude` CLI, parses stream-json, broadcasts SSE |
@@ -358,6 +368,7 @@ Take over any agent session from your phone or browser:
 | `frontend/src/components/DispatchPanel.jsx` | Dispatch config: model selector, tool presets, budget/turn limits |
 | `frontend/src/components/RemoteControlModal.jsx` | QR code + URL for phone access |
 | `frontend/src/components/LiveOutput.jsx` | Terminal-style output renderer |
+| `frontend/src/pages/Integrations.jsx` | Integrations info page: setup guides for Claude Code, OpenClaw, Cursor, Windsurf, and custom MCP clients |
 | `frontend/src/api/client.js` | API client + SSE streaming |
 
 ## API Endpoints
