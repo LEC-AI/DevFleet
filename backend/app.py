@@ -75,6 +75,9 @@ async def lifespan(app):
     await health_checker.start_checker()
     await mission_watcher.start_watcher()
     await scheduler.start_scheduler()
+    # Load plugins (custom tools, hooks, extensions)
+    from plugins import load_plugins
+    load_plugins()
     log.info("DevFleet API started — DB initialized at %s (engine: %s)", db.DB_PATH, log_engine)
     yield
     await scheduler.stop_scheduler()
@@ -107,34 +110,38 @@ MAX_CONCURRENT_AGENTS = int(os.environ.get("DEVFLEET_MAX_AGENTS", "3"))
 
 from mcp.server.sse import SseServerTransport
 from mcp_external import server as mcp_server
-from starlette.requests import Request as StarletteRequest
 from starlette.routing import Route, Mount
 
 _mcp_sse = SseServerTransport("/messages/")
 
 
-async def _handle_mcp_sse(request: StarletteRequest):
-    """SSE stream endpoint for MCP clients."""
-    async with _mcp_sse.connect_sse(
-        request.scope, request.receive, request._send
-    ) as streams:
-        await mcp_server.run(
-            streams[0], streams[1],
-            mcp_server.create_initialization_options(),
-        )
+# Starlette treats classes as raw ASGI apps (scope, receive, send)
+# while functions get wrapped with Request objects (which hide `send`).
+# SSE transport needs raw ASGI access, so we use classes.
+
+class _McpSseEndpoint:
+    async def __call__(self, scope, receive, send):
+        try:
+            async with _mcp_sse.connect_sse(scope, receive, send) as streams:
+                await mcp_server.run(
+                    streams[0], streams[1],
+                    mcp_server.create_initialization_options(),
+                )
+        except Exception:
+            log.exception("MCP SSE session error")
 
 
-async def _handle_mcp_post(request: StarletteRequest):
-    """Handles MCP JSON-RPC messages from clients."""
-    await _mcp_sse.handle_post_message(
-        request.scope, request.receive, request._send
-    )
+class _McpPostEndpoint:
+    async def __call__(self, scope, receive, send):
+        try:
+            await _mcp_sse.handle_post_message(scope, receive, send)
+        except Exception:
+            log.exception("MCP POST handler error")
 
 
-# Mount as Starlette routes (SSE needs raw ASGI scope/receive/send)
-app.mount("/mcp", Mount(path="/", routes=[
-    Route("/sse", endpoint=_handle_mcp_sse),
-    Route("/messages/", endpoint=_handle_mcp_post, methods=["POST"]),
+app.mount("/mcp", Mount(path="", routes=[
+    Route("/sse", endpoint=_McpSseEndpoint()),
+    Route("/messages/", endpoint=_McpPostEndpoint(), methods=["POST"]),
 ]))
 
 
@@ -771,6 +778,20 @@ async def dashboard_stats():
         }
     finally:
         await conn.close()
+
+
+# ──────────────────────────────────────────────
+# Plugins — List loaded plugins and their tools
+# ──────────────────────────────────────────────
+
+@app.get("/api/plugins")
+async def api_list_plugins():
+    from plugins import registry
+    return {
+        "loaded": registry.loaded_plugins,
+        "custom_tools": [{"name": t.name, "description": t.description} for t in registry.tools],
+        "hooks": {k: len(v) for k, v in registry._hooks.items() if v},
+    }
 
 
 # ──────────────────────────────────────────────

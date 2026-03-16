@@ -12,6 +12,7 @@ Exposes DevFleet as an MCP server so any MCP-compatible client
 Mount via SSE transport at /mcp on the FastAPI app.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -169,18 +170,64 @@ TOOLS = [
             "required": ["project_id"],
         },
     ),
+    types.Tool(
+        name="cancel_mission",
+        description="Cancel a running mission and stop its agent.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "mission_id": {"type": "string", "description": "Mission ID to cancel"},
+            },
+            "required": ["mission_id"],
+        },
+    ),
+    types.Tool(
+        name="wait_for_mission",
+        description=(
+            "Wait for a mission to complete and return its final status and report. "
+            "Polls every 5 seconds. Use after dispatch_mission to block until done."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "mission_id": {"type": "string", "description": "Mission ID to wait for"},
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": "Max seconds to wait (default: 600, max: 1800)",
+                },
+            },
+            "required": ["mission_id"],
+        },
+    ),
+    types.Tool(
+        name="get_dashboard",
+        description=(
+            "Get a high-level dashboard of DevFleet: running agents, "
+            "project count, mission stats, and recent activity."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {},
+        },
+    ),
 ]
 
 
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
-    return TOOLS
+    from plugins import registry
+    return TOOLS + registry.tools
 
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     try:
-        result = await _handle_tool(name, arguments)
+        # Check plugin tools first
+        from plugins import registry
+        if name in registry.tool_handlers:
+            result = await registry.tool_handlers[name](arguments)
+        else:
+            result = await _handle_tool(name, arguments)
         return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
     except Exception as e:
         log.exception(f"MCP tool {name} failed")
@@ -206,6 +253,12 @@ async def _handle_tool(name: str, args: dict) -> dict:
             return await _list_projects(conn)
         elif name == "list_missions":
             return await _list_missions(args, conn)
+        elif name == "cancel_mission":
+            return await _cancel_mission(args, conn)
+        elif name == "wait_for_mission":
+            return await _wait_for_mission(args)
+        elif name == "get_dashboard":
+            return await _get_dashboard(conn)
         else:
             return {"error": f"Unknown tool: {name}"}
     finally:
@@ -442,3 +495,120 @@ async def _list_missions(args: dict, conn) -> dict:
         missions.append(m)
 
     return {"missions": missions, "count": len(missions)}
+
+
+async def _cancel_mission(args: dict, conn) -> dict:
+    mid = args["mission_id"]
+
+    # Find running session
+    cur = await conn.execute(
+        "SELECT id, pid FROM agent_sessions WHERE mission_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+        (mid,),
+    )
+    session = await cur.fetchone()
+    if not session:
+        return {"error": f"No running session for mission {mid}"}
+
+    session = dict(session)
+    sid = session["id"]
+
+    # Try to cancel the process
+    try:
+        from sdk_engine import cancel_session
+        await cancel_session(sid)
+    except Exception as e:
+        log.warning(f"cancel_session failed for {sid}: {e}")
+        # Fallback: kill PID if available
+        pid = session.get("pid")
+        if pid:
+            try:
+                import signal
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+    # Update status
+    await conn.execute("UPDATE agent_sessions SET status = 'cancelled' WHERE id = ?", (sid,))
+    await conn.execute("UPDATE missions SET status = 'failed' WHERE id = ?", (mid,))
+    await conn.commit()
+
+    return {"mission_id": mid, "session_id": sid, "status": "cancelled"}
+
+
+async def _wait_for_mission(args: dict) -> dict:
+    mid = args["mission_id"]
+    timeout = min(args.get("timeout_seconds", 600), 1800)  # cap at 30 min
+    elapsed = 0
+    poll_interval = 5
+
+    while elapsed < timeout:
+        conn = await db.get_db()
+        try:
+            cur = await conn.execute("SELECT status FROM missions WHERE id = ?", (mid,))
+            row = await cur.fetchone()
+            if not row:
+                return {"error": f"Mission {mid} not found"}
+
+            status = row["status"]
+            if status in ("completed", "failed"):
+                # Get report if available
+                result = await _get_mission_status({"mission_id": mid}, conn)
+                report_cur = await conn.execute(
+                    "SELECT * FROM reports WHERE mission_id = ? ORDER BY created_at DESC LIMIT 1",
+                    (mid,),
+                )
+                report = await report_cur.fetchone()
+                if report:
+                    report = dict(report)
+                    result["report"] = {
+                        "what_done": report["what_done"],
+                        "what_tested": report["what_tested"],
+                        "what_untested": report["what_untested"],
+                        "files_changed": report["files_changed"],
+                        "errors_encountered": report["errors_encountered"],
+                        "next_steps": report["next_steps"],
+                    }
+                return result
+        finally:
+            await conn.close()
+
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+    return {"mission_id": mid, "status": "timeout", "error": f"Mission did not complete within {timeout}s"}
+
+
+async def _get_dashboard(conn) -> dict:
+    # Project count
+    cur = await conn.execute("SELECT COUNT(*) FROM projects")
+    project_count = (await cur.fetchone())[0]
+
+    # Mission stats
+    cur = await conn.execute(
+        "SELECT status, COUNT(*) as cnt FROM missions GROUP BY status"
+    )
+    mission_stats = {row["status"]: row["cnt"] for row in await cur.fetchall()}
+
+    # Running agents
+    cur = await conn.execute(
+        "SELECT s.id, s.mission_id, m.title FROM agent_sessions s "
+        "JOIN missions m ON s.mission_id = m.id WHERE s.status = 'running'"
+    )
+    running = [dict(r) for r in await cur.fetchall()]
+
+    # Recent completions (last 5)
+    cur = await conn.execute(
+        "SELECT m.id, m.title, m.status, s.ended_at, s.total_cost_usd "
+        "FROM missions m LEFT JOIN agent_sessions s ON m.id = s.mission_id "
+        "WHERE m.status IN ('completed', 'failed') "
+        "ORDER BY s.ended_at DESC LIMIT 5"
+    )
+    recent = [dict(r) for r in await cur.fetchall()]
+
+    return {
+        "projects": project_count,
+        "missions": mission_stats,
+        "running_agents": running,
+        "agent_slots": f"{len(running)}/{os.environ.get('DEVFLEET_MAX_AGENTS', '3')}",
+        "recent_activity": recent,
+    }

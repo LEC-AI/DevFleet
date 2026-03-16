@@ -54,6 +54,9 @@ There are no tests or linting configured in this project.
 - `backend/scheduler.py` — Cron scheduler: built-in cron parser, clones template missions on schedule, sets auto_dispatch
 - `backend/mcp_context.py` — Stdio MCP server: contextual intelligence (mission, project, session, team context)
 - `backend/mcp_devfleet.py` — Stdio MCP server: agent self-service (submit_report, create_sub_mission with auto_dispatch, request_review, get_sub_mission_status, list_project_missions)
+- `backend/mcp_external.py` — SSE MCP server: external integration endpoint (plan, dispatch, cancel, wait, dashboard — any MCP client connects at /mcp/sse)
+- `backend/planner.py` — AI project planner: natural language → project + chained missions via Claude Sonnet
+- `backend/plugins.py` — Plugin system: auto-loads plugins from plugins/ dir, registers custom MCP tools + lifecycle hooks
 - `backend/autoloop.py` — Auto-loop: parallel-aware planner (returns single or multiple tasks), multi-mission dispatch, waits for all to complete
 - `backend/dispatcher.py` — CLI dispatch engine (legacy): builds CLI args, spawns `claude` CLI, parses stream-json
 - `backend/remote_control.py` — Remote control manager: spawns `claude remote-control`, parses URL, monitors sessions

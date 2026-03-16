@@ -183,6 +183,9 @@ DevFleet itself is an MCP server. Any MCP-compatible client (Claude Code, Cursor
 | `dispatch_mission` | Send an agent to work on a mission |
 | `get_mission_status` | Check progress of any mission |
 | `get_report` | Read the structured report (what's done, tested, errors, next steps) |
+| `cancel_mission` | Cancel a running mission and stop its agent |
+| `wait_for_mission` | Block until a mission completes, then return status + report |
+| `get_dashboard` | High-level overview: running agents, project stats, recent activity |
 | `list_projects` | Browse all projects |
 | `list_missions` | List missions in a project, filter by status |
 
@@ -209,6 +212,36 @@ Add to your MCP settings (usually `.cursor/mcp.json` or IDE settings):
   }
 }
 ```
+
+### Plugin System
+
+Extend DevFleet with custom tools, hooks, and integrations. Drop a Python file into `plugins/` and it loads automatically at startup.
+
+```python
+# plugins/slack_notify.py
+def register(registry):
+    @registry.hook("post_complete")
+    async def notify_slack(mission, report):
+        import httpx
+        await httpx.AsyncClient().post(WEBHOOK, json={
+            "text": f"✅ {mission['title']} done! Files: {report['files_changed']}"
+        })
+
+    @registry.tool("search_jira", description="Search Jira tickets", input_schema={
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    })
+    async def search_jira(args):
+        # Your Jira integration here
+        return {"tickets": [...]}
+```
+
+**Hook events:** `pre_dispatch`, `post_complete`, `post_fail`, `pre_plan`, `post_plan`
+
+Plugin tools automatically appear as MCP tools — any connected MCP client can use them. See `plugins/_example_plugin.py` for a full example.
+
+- `GET /api/plugins` — List loaded plugins and their tools
 
 ### Context Mode
 
@@ -260,6 +293,8 @@ Take over any agent session from your phone or browser:
 | `backend/scheduler.py` | Cron scheduler: evaluates schedules, clones template missions, sets auto_dispatch |
 | `backend/mcp_context.py` | Stdio MCP server: contextual intelligence (mission, project, session, team context) |
 | `backend/mcp_devfleet.py` | Stdio MCP server: agent self-service (submit report, create sub-missions, request review, check sub-mission status) |
+| `backend/mcp_external.py` | SSE MCP server: external integration (plan, dispatch, cancel, wait, dashboard — any MCP client) |
+| `backend/planner.py` | AI project planner: natural language → project + chained missions via Claude |
 | `backend/autoloop.py` | Auto-loop: parallel-aware plan-dispatch cycle (single or multi-task per iteration) |
 | `backend/dispatcher.py` | CLI engine (fallback): spawns `claude` CLI, parses stream-json, broadcasts SSE |
 | `backend/remote_control.py` | Remote control manager: spawns `claude remote-control`, parses URL, monitors sessions |
@@ -281,8 +316,27 @@ Take over any agent session from your phone or browser:
 
 ## API Endpoints
 
-### MCP Server
-- `GET /mcp/sse` — SSE endpoint for MCP clients (tools: plan_project, create_project, create_mission, dispatch_mission, get_mission_status, get_report, list_projects, list_missions)
+### MCP Server — Use DevFleet from Any Agent
+
+Connect any MCP-compatible client to DevFleet. Add to your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "devfleet": {
+      "type": "sse",
+      "url": "http://localhost:18801/mcp/sse"
+    }
+  }
+}
+```
+
+**Available tools:** `plan_project`, `create_project`, `create_mission`, `dispatch_mission`, `cancel_mission`, `wait_for_mission`, `get_mission_status`, `get_report`, `get_dashboard`, `list_projects`, `list_missions`
+
+Works with: Claude Code, Cursor, Windsurf, Cline, and any MCP-compatible agent.
+
+- `GET /mcp/sse` — SSE stream endpoint
+- `POST /mcp/messages/` — JSON-RPC message handler
 
 ### Planner
 - `POST /api/plan` — AI project planner: takes a natural language prompt, returns a project with chained missions
