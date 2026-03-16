@@ -34,7 +34,7 @@ sequenceDiagram
 
 ## Step 1: Add DevFleet as an MCP Server
 
-DevFleet exposes an MCP server over SSE at `/mcp/sse`. Add it to your Claude Code configuration.
+DevFleet exposes an MCP server via Streamable HTTP at `/mcp`. Add it to your Claude Code configuration.
 
 ### Option A: Project-level (recommended)
 
@@ -44,8 +44,8 @@ Add to `.claude/settings.json` in your project:
 {
   "mcpServers": {
     "devfleet": {
-      "type": "sse",
-      "url": "http://localhost:18801/mcp/sse"
+      "type": "http",
+      "url": "http://localhost:18801/mcp"
     }
   }
 }
@@ -59,8 +59,8 @@ Add to `~/.claude/settings.json` to make DevFleet available in all projects:
 {
   "mcpServers": {
     "devfleet": {
-      "type": "sse",
-      "url": "http://localhost:18801/mcp/sse"
+      "type": "http",
+      "url": "http://localhost:18801/mcp"
     }
   }
 }
@@ -69,7 +69,7 @@ Add to `~/.claude/settings.json` to make DevFleet available in all projects:
 ### Option C: CLI flag
 
 ```bash
-claude --mcp-server "devfleet:sse:http://localhost:18801/mcp/sse"
+claude mcp add devfleet --transport http http://localhost:18801/mcp
 ```
 
 ## Step 2: Install the Skill

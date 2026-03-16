@@ -49,7 +49,7 @@ NanoClaw uses the Claude CLI under the hood, which picks up MCP servers from you
 
 **Option A — Claude CLI (recommended):**
 ```bash
-claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse
+claude mcp add devfleet --transport http http://localhost:18801/mcp
 ```
 
 **Option B — Manual config** (`~/.claude/settings.json`):
@@ -57,8 +57,8 @@ claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse
 {
   "mcpServers": {
     "devfleet": {
-      "type": "sse",
-      "url": "http://localhost:18801/mcp/sse"
+      "type": "http",
+      "url": "http://localhost:18801/mcp"
     }
   }
 }
@@ -177,14 +177,14 @@ Claude calls `mcp__devfleet__cancel_mission(mission_id="...")` → stops the age
 │  │  mcp__devfleet__get_report          │    │
 │  │  ... (11 tools total)               │    │
 │  └──────────────┬──────────────────────┘    │
-│                 │ MCP over SSE                │
+│                 │ MCP over HTTP               │
 └─────────────────┼───────────────────────────┘
                   │
                   ▼
 ┌─────────────────────────────────────────────┐
 │  Claude DevFleet API (:18801)               │
 │                                             │
-│  /mcp/sse ← SSE transport                  │
+│  /mcp ← Streamable HTTP transport           │
 │  /mcp/messages/ ← JSON-RPC handler         │
 │                                             │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │

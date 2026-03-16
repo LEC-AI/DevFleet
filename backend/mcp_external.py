@@ -361,10 +361,17 @@ async def _create_mission(args: dict, conn) -> dict:
 
 
 async def _dispatch_mission(args: dict, conn) -> dict:
+    import uuid as _uuid
+    from datetime import datetime, timezone
+
     mid = args["mission_id"]
 
-    # Fetch mission
-    cur = await conn.execute("SELECT * FROM missions WHERE id = ?", (mid,))
+    # Fetch mission with project path (needed by dispatch engine)
+    cur = await conn.execute(
+        "SELECT m.*, p.path AS project_path FROM missions m "
+        "JOIN projects p ON p.id = m.project_id WHERE m.id = ?",
+        (mid,),
+    )
     mission = await cur.fetchone()
     if not mission:
         return {"error": f"Mission {mid} not found"}
@@ -373,6 +380,34 @@ async def _dispatch_mission(args: dict, conn) -> dict:
     if mission["status"] == "running":
         return {"error": "Mission is already running"}
 
+    # Check agent slot availability
+    from app import running_tasks, MAX_CONCURRENT_AGENTS
+
+    running_count = sum(1 for t in running_tasks.values() if not t.done())
+    if running_count >= MAX_CONCURRENT_AGENTS:
+        return {"error": f"All {MAX_CONCURRENT_AGENTS} agent slots in use. Wait for one to finish or cancel a running mission."}
+
+    # Get last report for context (matches app.py flow)
+    cur = await conn.execute(
+        "SELECT * FROM reports WHERE mission_id = ? ORDER BY created_at DESC LIMIT 1",
+        (mid,),
+    )
+    report_row = await cur.fetchone()
+    last_report = dict(report_row) if report_row else None
+
+    # Create session in DB (matches app.py flow)
+    session_id = str(_uuid.uuid4())
+    model_used = args.get("model") or mission.get("model") or "claude-opus-4-6"
+    await conn.execute(
+        "INSERT INTO agent_sessions (id, mission_id, model) VALUES (?, ?, ?)",
+        (session_id, mid, model_used),
+    )
+    await conn.execute(
+        "UPDATE missions SET status='running', updated_at=? WHERE id=?",
+        (datetime.now(timezone.utc).isoformat(), mid),
+    )
+    await conn.commit()
+
     # Import and dispatch
     USE_SDK = os.environ.get("DEVFLEET_ENGINE", "sdk").lower() == "sdk"
     if USE_SDK:
@@ -380,18 +415,29 @@ async def _dispatch_mission(args: dict, conn) -> dict:
     else:
         from dispatcher import dispatch_mission
 
-    opts = {
-        "model": args.get("model"),
-        "max_turns": args.get("max_turns"),
-    }
-    # Clean None values
-    opts = {k: v for k, v in opts.items() if v is not None}
+    # Build opts from args
+    from models import DispatchOptions
 
-    session = await dispatch_mission(mid, opts if opts else None)
+    opts_kwargs = {}
+    if args.get("model"):
+        opts_kwargs["model"] = args["model"]
+    if args.get("max_turns"):
+        opts_kwargs["max_turns"] = args["max_turns"]
+    opts = DispatchOptions(**opts_kwargs) if opts_kwargs else None
+
+    # Dispatch asynchronously (matches app.py flow)
+    import asyncio
+
+    task = asyncio.create_task(
+        dispatch_mission(session_id, mission, last_report, opts=opts)
+    )
+    running_tasks[session_id] = task
+
     return {
-        "session_id": session["id"],
+        "session_id": session_id,
         "mission_id": mid,
         "status": "dispatched",
+        "model": model_used,
         "hint": "Mission is now running. Use get_mission_status to check progress.",
     }
 

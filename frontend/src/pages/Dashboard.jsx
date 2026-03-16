@@ -456,11 +456,11 @@ export default function Dashboard({ navigate }) {
             color: 'var(--text-secondary)',
           }}>
             <code style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse
+              claude mcp add devfleet --transport http http://localhost:18801/mcp
             </code>
             <button
               onClick={() => {
-                navigator.clipboard.writeText('claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse');
+                navigator.clipboard.writeText('claude mcp add devfleet --transport http http://localhost:18801/mcp');
                 setMcpCopied(true);
                 setTimeout(() => setMcpCopied(false), 2000);
               }}

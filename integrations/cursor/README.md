@@ -20,8 +20,8 @@ Use Claude DevFleet as a multi-agent backend from Cursor. Dispatch coding agents
 Configure the server with these values:
 
 - **Name**: `devfleet`
-- **Type**: `sse`
-- **URL**: `http://localhost:18801/mcp/sse`
+- **Type**: `http`
+- **URL**: `http://localhost:18801/mcp`
 
 Alternatively, add it directly to your project's `.cursor/mcp.json`:
 
@@ -29,8 +29,8 @@ Alternatively, add it directly to your project's `.cursor/mcp.json`:
 {
   "mcpServers": {
     "devfleet": {
-      "type": "sse",
-      "url": "http://localhost:18801/mcp/sse"
+      "type": "http",
+      "url": "http://localhost:18801/mcp"
     }
   }
 }
@@ -91,8 +91,8 @@ If DevFleet runs in Docker or on a remote host, update the URL accordingly:
 {
   "mcpServers": {
     "devfleet": {
-      "type": "sse",
-      "url": "http://<host>:<port>/mcp/sse"
+      "type": "http",
+      "url": "http://<host>:<port>/mcp"
     }
   }
 }

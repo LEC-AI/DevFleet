@@ -8,6 +8,7 @@ import LiveAgent from './pages/LiveAgent';
 import Reports from './pages/Reports';
 import StatusPage from './pages/StatusPage';
 import ProjectDetail from './pages/ProjectDetail';
+import Integrations from './pages/Integrations';
 
 function App() {
   const [page, setPage] = useState('dashboard');
@@ -34,6 +35,8 @@ function App() {
         return <LiveAgent sessionId={selectedId} navigate={navigate} />;
       case 'reports':
         return <Reports navigate={navigate} />;
+      case 'integrations':
+        return <Integrations navigate={navigate} />;
       case 'status':
         return <StatusPage navigate={navigate} />;
       default:

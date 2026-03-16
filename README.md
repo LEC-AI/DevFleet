@@ -167,11 +167,13 @@ Claude DevFleet itself is an MCP server. Any MCP-compatible client (Claude Code,
 ```json
 {
   "devfleet": {
-    "type": "sse",
-    "url": "http://localhost:18801/mcp/sse"
+    "type": "http",
+    "url": "http://localhost:18801/mcp"
   }
 }
 ```
+
+> Both Streamable HTTP (`/mcp`) and SSE (`/mcp/sse`) transports are supported. Streamable HTTP is recommended as SSE is deprecated in the MCP spec.
 
 #### How It Works
 
@@ -220,14 +222,14 @@ sequenceDiagram
 
 | Client | Setup | Docs |
 |--------|-------|------|
-| **Claude Code** | `claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse` | [integrations/ecc/](integrations/ecc/) |
+| **Claude Code** | `claude mcp add devfleet --transport http http://localhost:18801/mcp` | [integrations/ecc/](integrations/ecc/) |
 | **OpenClaw / NanoClaw** | Load skill: `/load claude-devfleet` | [integrations/openclaw/](integrations/openclaw/) |
 | **Cursor** | Add to `.cursor/mcp.json` | [integrations/cursor/](integrations/cursor/) |
 | **Windsurf / Cline** | Add to MCP settings | Same pattern as Cursor |
 
 **Example — Claude Code:**
 ```bash
-claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse
+claude mcp add devfleet --transport http http://localhost:18801/mcp
 
 # Then say:
 # "Use devfleet to plan a project: build a REST API with auth and tests"
@@ -250,7 +252,8 @@ Add to `.cursor/mcp.json` or IDE MCP settings:
 {
   "mcpServers": {
     "devfleet": {
-      "url": "http://localhost:18801/mcp/sse"
+      "type": "http",
+      "url": "http://localhost:18801/mcp"
     }
   }
 }
@@ -367,8 +370,8 @@ Connect any MCP-compatible client to Claude DevFleet. Add to your MCP config:
 {
   "mcpServers": {
     "devfleet": {
-      "type": "sse",
-      "url": "http://localhost:18801/mcp/sse"
+      "type": "http",
+      "url": "http://localhost:18801/mcp"
     }
   }
 }
@@ -378,7 +381,8 @@ Connect any MCP-compatible client to Claude DevFleet. Add to your MCP config:
 
 Works with: Claude Code, Cursor, Windsurf, Cline, and any MCP-compatible agent.
 
-- `GET /mcp/sse` — SSE stream endpoint
+- `GET|POST|DELETE /mcp/` — Streamable HTTP endpoint (recommended)
+- `GET /mcp/sse` — SSE stream endpoint (legacy)
 - `POST /mcp/messages/` — JSON-RPC message handler
 
 ### Planner
