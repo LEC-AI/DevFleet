@@ -162,7 +162,7 @@ Every dispatched agent automatically gets two stdio MCP servers attached:
 
 ### MCP Integration — Use Claude DevFleet from Any Agent
 
-Claude DevFleet itself is an MCP server. Any MCP-compatible client (Claude Code, Cursor, Windsurf, Cline, custom agents) can connect and use DevFleet as a tool:
+Claude DevFleet itself is an MCP server. Any MCP-compatible client (Claude Code, Cursor, Windsurf, Cline, OpenClaw, custom agents) can connect and orchestrate multi-agent work:
 
 ```json
 {
@@ -173,7 +173,34 @@ Claude DevFleet itself is an MCP server. Any MCP-compatible client (Claude Code,
 }
 ```
 
-**Available tools:**
+#### How It Works
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Claude Code / OpenClaw / Cursor
+    participant D as DevFleet MCP Server
+    participant A1 as Agent 1 (Worktree)
+    participant A2 as Agent 2 (Worktree)
+
+    U->>C: "Build a REST API with auth and tests"
+    C->>D: plan_project(prompt)
+    D-->>C: project_id + mission list (with depends_on DAG)
+    C->>U: Confirm plan (missions + dependencies)
+    U->>C: Approved
+    C->>D: dispatch_mission(mission_id=M1)
+    D->>A1: Spawn agent in isolated git worktree
+    A1-->>D: Mission M1 complete → auto-merge
+    D->>A2: Auto-dispatch M2 (depends_on M1 resolved)
+    A2-->>D: Mission M2 complete → auto-merge
+    C->>D: get_mission_status(mission_id=M2)
+    D-->>C: status: completed
+    C->>D: get_report(mission_id=M2)
+    D-->>C: files_changed, what_done, errors, next_steps
+    C-->>U: Summary of completed work
+```
+
+#### Available MCP Tools
 
 | Tool | Description |
 |------|-------------|
@@ -189,20 +216,36 @@ Claude DevFleet itself is an MCP server. Any MCP-compatible client (Claude Code,
 | `list_projects` | Browse all projects |
 | `list_missions` | List missions in a project, filter by status |
 
+#### Integrations
+
+| Client | Setup | Docs |
+|--------|-------|------|
+| **Claude Code** | `claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse` | [integrations/ecc/](integrations/ecc/) |
+| **OpenClaw / NanoClaw** | Load skill: `/load claude-devfleet` | [integrations/openclaw/](integrations/openclaw/) |
+| **Cursor** | Add to `.cursor/mcp.json` | [integrations/cursor/](integrations/cursor/) |
+| **Windsurf / Cline** | Add to MCP settings | Same pattern as Cursor |
+
 **Example — Claude Code:**
 ```bash
-# Add to your Claude Code MCP config
 claude mcp add devfleet --transport sse http://localhost:18801/mcp/sse
 
-# Now you can say:
+# Then say:
 # "Use devfleet to plan a project: build a REST API with auth and tests"
 # "Check the status of my devfleet missions"
-# "Dispatch mission #1 in devfleet"
+```
+
+**Example — OpenClaw / NanoClaw:**
+```bash
+# In NanoClaw REPL:
+/load claude-devfleet
+> Use DevFleet to build a Python CLI that converts CSV to JSON
+
+# Claude plans the project, dispatches agents, reports back
 ```
 
 **Example — Cursor / Windsurf / Cline:**
 
-Add to your MCP settings (usually `.cursor/mcp.json` or IDE settings):
+Add to `.cursor/mcp.json` or IDE MCP settings:
 ```json
 {
   "mcpServers": {

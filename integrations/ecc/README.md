@@ -1,12 +1,36 @@
 # DevFleet Skill for Claude Code (ECC)
 
-Use Claude DevFleet as a multi-agent backend from Claude Code. Plan projects, dispatch agents, and monitor missions -- all from your terminal.
+Use Claude DevFleet as a multi-agent backend from Claude Code. Plan projects, dispatch agents, and monitor missions — all from your terminal.
+
+## How It Works
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Claude Code
+    participant D as DevFleet MCP
+    participant A1 as Agent 1 (Worktree)
+    participant A2 as Agent 2 (Worktree)
+
+    U->>C: "Build a REST API with auth and tests"
+    C->>D: plan_project(prompt)
+    D-->>C: project_id + mission list (with depends_on DAG)
+    C->>U: Confirm plan (missions + dependencies)
+    U->>C: Approved
+    C->>D: dispatch_mission(mission_id=M1)
+    D->>A1: Spawn agent in isolated git worktree
+    A1-->>D: Mission M1 complete → auto-merge
+    D->>A2: Auto-dispatch M2 (depends_on M1 resolved)
+    A2-->>D: Mission M2 complete → auto-merge
+    C->>D: get_report(mission_id=M2)
+    D-->>C: files_changed, what_done, errors, next_steps
+    C-->>U: Summary of completed work
+```
 
 ## Prerequisites
 
 - Claude DevFleet API running (default: `http://localhost:18801`)
 - Claude Code (CLI) installed
-- Python 3.11+ with DevFleet dependencies (`pip install -r backend/requirements.txt`)
 
 ## Step 1: Add DevFleet as an MCP Server
 
