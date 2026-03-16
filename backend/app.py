@@ -104,20 +104,22 @@ MAX_CONCURRENT_AGENTS = int(os.environ.get("DEVFLEET_MAX_AGENTS", "3"))
 # ──────────────────────────────────────────────
 # MCP Server — External integration endpoint
 # ──────────────────────────────────────────────
-# Any MCP-compatible client (Claude Code, Cursor, Windsurf, etc.)
-# can connect to DevFleet via:
-#   { "type": "sse", "url": "http://localhost:18801/mcp/sse" }
+# Any MCP-compatible client can connect to DevFleet via:
+#   Streamable HTTP: { "type": "http",  "url": "http://localhost:18801/mcp" }
+#   SSE (legacy):    { "type": "sse",   "url": "http://localhost:18801/mcp/sse" }
 
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http import StreamableHTTPServerTransport
 from mcp_external import server as mcp_server
 from starlette.routing import Route, Mount
 
+# ── SSE transport (legacy, backward-compatible) ──
 _mcp_sse = SseServerTransport("/messages/")
 
 
 # Starlette treats classes as raw ASGI apps (scope, receive, send)
 # while functions get wrapped with Request objects (which hide `send`).
-# SSE transport needs raw ASGI access, so we use classes.
+# Both transports need raw ASGI access, so we use classes.
 
 class _McpSseEndpoint:
     async def __call__(self, scope, receive, send):
@@ -139,7 +141,72 @@ class _McpPostEndpoint:
             log.exception("MCP POST handler error")
 
 
+# ── Streamable HTTP transport (preferred) ──
+# Handles GET (SSE stream) and POST (JSON-RPC) on a single endpoint.
+# Each session gets its own transport instance, keyed by mcp-session-id header.
+
+_http_transports: dict[str, StreamableHTTPServerTransport] = {}
+_http_ready: dict[str, asyncio.Event] = {}
+
+
+async def _ensure_http_transport(session_id: str) -> StreamableHTTPServerTransport:
+    """Get or create a Streamable HTTP transport, ensuring connect() is ready."""
+    if session_id in _http_transports:
+        # Wait for existing transport to be ready
+        await _http_ready[session_id].wait()
+        return _http_transports[session_id]
+
+    transport = StreamableHTTPServerTransport(mcp_session_id=session_id)
+    _http_transports[session_id] = transport
+    _http_ready[session_id] = asyncio.Event()
+
+    async def _run_server():
+        try:
+            async with transport.connect() as streams:
+                _http_ready[session_id].set()
+                await mcp_server.run(
+                    streams[0], streams[1],
+                    mcp_server.create_initialization_options(),
+                )
+        except Exception:
+            log.exception("MCP HTTP session error")
+        finally:
+            _http_transports.pop(session_id, None)
+            _http_ready.pop(session_id, None)
+
+    asyncio.create_task(_run_server())
+    await _http_ready[session_id].wait()
+    return transport
+
+
+class _McpHttpEndpoint:
+    """Streamable HTTP MCP endpoint — handles GET, POST, DELETE on /mcp."""
+
+    async def __call__(self, scope, receive, send):
+        import uuid as _uuid
+        from starlette.requests import Request
+
+        request = Request(scope, receive, send)
+        session_id = request.headers.get("mcp-session-id")
+
+        if request.method == "DELETE":
+            if session_id and session_id in _http_transports:
+                transport = _http_transports.pop(session_id)
+                _http_ready.pop(session_id, None)
+                await transport.terminate()
+            return
+
+        # For GET and POST, ensure transport exists and is ready
+        if not session_id:
+            session_id = str(_uuid.uuid4())
+        transport = await _ensure_http_transport(session_id)
+        await transport.handle_request(scope, receive, send)
+
+
 app.mount("/mcp", Mount(path="", routes=[
+    # Streamable HTTP — single endpoint for GET/POST/DELETE
+    Route("/", endpoint=_McpHttpEndpoint(), methods=["GET", "POST", "DELETE"]),
+    # SSE (legacy) — backward-compatible endpoints
     Route("/sse", endpoint=_McpSseEndpoint()),
     Route("/messages/", endpoint=_McpPostEndpoint(), methods=["POST"]),
 ]))
