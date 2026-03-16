@@ -925,8 +925,22 @@ async def api_plan_project(body: PlanRequest):
             projects_base = os.path.join(devfleet_root, "projects")
         project_path = os.path.join(projects_base, slug)
 
+    # Resolve for local filesystem (Docker container path)
+    resolved_path = resolve_path(project_path)
+
     try:
-        result = await plan_project(body.prompt, project_path)
+        result = await plan_project(body.prompt, resolved_path)
+        # Store and return the host-facing path (for UI display)
+        host_path = reverse_path(resolved_path)
+        result["project"]["path"] = host_path
+        # Also update the DB record to store the host path
+        conn = await db.get_db()
+        try:
+            await conn.execute("UPDATE projects SET path = ? WHERE id = ?",
+                               (host_path, result["project"]["id"]))
+            await conn.commit()
+        finally:
+            await conn.close()
         return result
     except ValueError as e:
         raise HTTPException(422, str(e))

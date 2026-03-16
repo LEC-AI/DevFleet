@@ -19,14 +19,16 @@ services:
 
       # Project directories the agents will work on — add your repos here
       # - /path/to/your/project:/workspace/your-project
+      - ${HOME}/projects:/workspace/projects
     environment:
       - DEVFLEET_DB=/app/data/devfleet.db
       - DEVFLEET_MAX_AGENTS=3
+      - DEVFLEET_PROJECTS_DIR=/workspace/projects
       - HOME=/home/devfleet
       - ANTHROPIC_BASE_URL=https://api.anthropic.com
       # Path mapping: enter host paths in UI, auto-translated inside container
       # Format: DEVFLEET_PATH_MAP_N=HOST_PATH:CONTAINER_PATH
-      # - DEVFLEET_PATH_MAP_1=/path/to/your/project:/workspace/your-project
+      - DEVFLEET_PATH_MAP_1=${HOME}/projects:/workspace/projects
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
