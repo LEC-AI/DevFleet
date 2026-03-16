@@ -29,7 +29,7 @@ export default function Sidebar({ activePage, navigate }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
-        <h1>Dev<span className="logo-gradient">Fleet</span></h1>
+        <h1>Claude <span className="logo-gradient">DevFleet</span></h1>
         <p>Coding Team Orchestrator</p>
         <p className="powered-by">Powered by Claude Code</p>
       </div>

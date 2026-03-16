@@ -148,7 +148,7 @@ TOOLS = [
     ),
     types.Tool(
         name="list_projects",
-        description="List all Claude Claude DevFleet projects.",
+        description="List all Claude DevFleet projects.",
         inputSchema={
             "type": "object",
             "properties": {},
