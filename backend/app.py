@@ -25,6 +25,9 @@ from remote_control import (start_remote_control, stop_remote_control,
                             subscribe_remote_session,
                             RemoteControlNotEnabled, WorkspaceNotTrusted)
 
+# Feature flags
+ENABLE_REMOTE_CONTROL = os.environ.get("DEVFLEET_ENABLE_REMOTE_CONTROL", "false").lower() == "true"
+
 # SDK engine is the new default; fall back to CLI dispatcher if SDK unavailable
 USE_SDK_ENGINE = os.environ.get("DEVFLEET_ENGINE", "sdk").lower() == "sdk"
 if USE_SDK_ENGINE:
@@ -957,6 +960,8 @@ async def api_plan_project(body: PlanRequest):
 async def start_remote(sid: str):
     """Start a remote-control session for a running or completed agent session.
     Returns a claude.ai URL that can be opened on phone/browser."""
+    if not ENABLE_REMOTE_CONTROL:
+        raise HTTPException(501, "Remote control is not enabled")
     conn = await db.get_db()
     try:
         rows = await conn.execute_fetchall(
@@ -1094,6 +1099,8 @@ async def takeover(sid: str):
 async def start_remote_for_mission(mid: str):
     """Start a fresh remote-control session for a mission (interactive mode).
     Creates a new session and launches remote-control in the project dir."""
+    if not ENABLE_REMOTE_CONTROL:
+        raise HTTPException(501, "Remote control is not enabled")
     conn = await db.get_db()
     try:
         rows = await conn.execute_fetchall(
@@ -1159,6 +1166,8 @@ async def start_remote_for_mission(mid: str):
 @app.delete("/api/sessions/{sid}/remote-control")
 async def stop_remote(sid: str):
     """Stop a remote-control session and reset mission status."""
+    if not ENABLE_REMOTE_CONTROL:
+        raise HTTPException(501, "Remote control is not enabled")
     # Try to stop the in-memory process (may not exist after server hot-reload)
     await stop_remote_control(sid)
 
@@ -1202,18 +1211,24 @@ async def stop_remote(sid: str):
 @app.get("/api/sessions/{sid}/remote-control")
 async def remote_status(sid: str):
     """Get remote-control status for a session."""
+    if not ENABLE_REMOTE_CONTROL:
+        raise HTTPException(501, "Remote control is not enabled")
     return get_remote_status(sid)
 
 
 @app.get("/api/remote-control/sessions")
 async def list_remote():
     """List all active remote-control sessions."""
+    if not ENABLE_REMOTE_CONTROL:
+        raise HTTPException(501, "Remote control is not enabled")
     return list_remote_sessions()
 
 
 @app.get("/api/sessions/{sid}/remote-stream")
 async def stream_remote(sid: str):
     """SSE stream of live remote-control process output."""
+    if not ENABLE_REMOTE_CONTROL:
+        raise HTTPException(501, "Remote control is not enabled")
     async def event_stream():
         async for event in subscribe_remote_session(sid):
             yield f"data: {json.dumps(event)}\n\n"
@@ -1709,4 +1724,12 @@ async def system_status():
         "engine": "sdk" if USE_SDK_ENGINE else "cli",
         "mission_watcher": mission_watcher.get_watcher_status(),
         "scheduler": scheduler.get_scheduler_status(),
+    }
+
+
+@app.get("/api/system/features")
+async def system_features():
+    """Get enabled features."""
+    return {
+        "remote_control": ENABLE_REMOTE_CONTROL,
     }

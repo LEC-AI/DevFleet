@@ -166,6 +166,7 @@ export const getMissionTypes = () => request('/config/mission-types');
 
 // ── System Status ──
 export const getSystemStatus = () => request('/system/status');
+export const getSystemFeatures = () => request('/system/features');
 
 // ── MCP Servers ──
 export const listMcpServers = (projectId) => request(`/projects/${projectId}/mcp-servers`);

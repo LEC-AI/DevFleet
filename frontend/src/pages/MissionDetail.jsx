@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getMission, updateMission, dispatchMission, deleteMission, generateNextMission, resumeMission, startMissionRemoteControl, stopRemoteControl, listSessions, getMissionEvents, setMissionSchedule, removeMissionSchedule } from '../api/client';
+import { getMission, updateMission, dispatchMission, deleteMission, generateNextMission, resumeMission, startMissionRemoteControl, stopRemoteControl, listSessions, getMissionEvents, setMissionSchedule, removeMissionSchedule, getSystemFeatures } from '../api/client';
 import StatusBadge from '../components/StatusBadge';
 import PromptEditor from '../components/PromptEditor';
 import ReportView from '../components/ReportView';
@@ -38,6 +38,7 @@ export default function MissionDetail({ id, navigate }) {
   const [disconnecting, setDisconnecting] = useState(false);
   const [activeRemoteSession, setActiveRemoteSession] = useState(null);
   const [events, setEvents] = useState([]);
+  const [remoteControlEnabled, setRemoteControlEnabled] = useState(true);
 
   const load = async () => {
     try {
@@ -65,6 +66,15 @@ export default function MissionDetail({ id, navigate }) {
   };
 
   useEffect(() => { load(); }, [id]);
+
+  useEffect(() => {
+    getSystemFeatures().then(features => {
+      setRemoteControlEnabled(features.remote_control);
+    }).catch(() => {
+      // Default to enabled if fetch fails
+      setRemoteControlEnabled(true);
+    });
+  }, []);
 
   const handleSave = async () => {
     try {
@@ -206,14 +216,16 @@ export default function MissionDetail({ id, navigate }) {
               <button className="btn btn-success" onClick={() => setShowDispatchPanel(!showDispatchPanel)} disabled={dispatching}>
                 {dispatching ? 'Dispatching...' : 'Dispatch Agent'}
               </button>
-              <button
-                className="btn btn-remote"
-                onClick={handleRemoteControl}
-                disabled={startingRemote}
-                title="Open interactive session on phone/browser"
-              >
-                {startingRemote ? 'Starting...' : 'Remote Control'}
-              </button>
+              {remoteControlEnabled && (
+                <button
+                  className="btn btn-remote"
+                  onClick={handleRemoteControl}
+                  disabled={startingRemote}
+                  title="Open interactive session on phone/browser"
+                >
+                  {startingRemote ? 'Starting...' : 'Remote Control'}
+                </button>
+              )}
             </>
           )}
           {activeRemoteSession && !editing && (
