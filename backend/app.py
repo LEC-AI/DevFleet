@@ -953,6 +953,175 @@ async def api_plan_project(body: PlanRequest):
 
 
 # ──────────────────────────────────────────────
+# Project Intelligence — Vision, Analysis, Health, Visualization, Optimization
+# ──────────────────────────────────────────────
+
+from planner_v2 import plan_project_intelligent
+from project_analyzer import analyze_project_files
+from health_metrics import get_project_health
+from visualizer import generate_mission_graph, generate_project_summary_diagram
+from cost_optimizer import analyze_costs_and_optimize
+
+
+class PlanIntelligentRequest(BaseModel):
+    prompt: str
+    project_path: str | None = None
+
+
+@app.post("/api/plan-intelligent", status_code=201)
+async def api_plan_intelligent(body: PlanIntelligentRequest):
+    """Enhanced project planner using extended thinking for better mission breaking."""
+    project_path = body.project_path
+    if not project_path:
+        import re
+        slug = re.sub(r'[^a-z0-9]+', '-', body.prompt.lower().strip())[:40].strip('-')
+        projects_base = os.environ.get("DEVFLEET_PROJECTS_DIR")
+        if not projects_base:
+            devfleet_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            projects_base = os.path.join(devfleet_root, "projects")
+        project_path = os.path.join(projects_base, slug)
+
+    resolved_path = resolve_path(project_path)
+
+    try:
+        result = await plan_project_intelligent(body.prompt, resolved_path)
+        host_path = reverse_path(resolved_path)
+        result["project"]["path"] = host_path
+        conn = await db.get_db()
+        try:
+            await conn.execute("UPDATE projects SET path = ? WHERE id = ?",
+                               (host_path, result["project"]["id"]))
+            await conn.commit()
+        finally:
+            await conn.close()
+        return result
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        log.exception("Intelligent planning failed")
+        raise HTTPException(500, f"Planning failed: {e}")
+
+
+class AnalyzeProjectRequest(BaseModel):
+    files: list[str] | None = None
+    custom_prompt: str = ""
+
+
+@app.post("/api/projects/{pid}/analyze")
+async def api_analyze_project(pid: str, body: AnalyzeProjectRequest):
+    """Analyze a project structure and suggest missions using vision + reasoning."""
+    conn = await db.get_db()
+    try:
+        rows = await conn.execute_fetchall("SELECT * FROM projects WHERE id=?", (pid,))
+        if not rows:
+            raise HTTPException(404, "Project not found")
+        project = dict(rows[0])
+    finally:
+        await conn.close()
+
+    try:
+        analysis = await analyze_project_files(
+            resolve_path(project["path"]),
+            files_to_analyze=body.files,
+            custom_prompt=body.custom_prompt
+        )
+        return {
+            "project_id": pid,
+            "analysis": analysis,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        log.exception("Project analysis failed")
+        raise HTTPException(500, f"Analysis failed: {e}")
+
+
+@app.get("/api/projects/{pid}/health")
+async def api_project_health(pid: str):
+    """Get comprehensive project health metrics and recommendations."""
+    conn = await db.get_db()
+    try:
+        rows = await conn.execute_fetchall("SELECT * FROM projects WHERE id=?", (pid,))
+        if not rows:
+            raise HTTPException(404, "Project not found")
+    finally:
+        await conn.close()
+
+    try:
+        health = await get_project_health(pid)
+        return health
+    except Exception as e:
+        log.exception("Health check failed")
+        raise HTTPException(500, f"Health check failed: {e}")
+
+
+@app.get("/api/projects/{pid}/missions/graph")
+async def api_mission_graph(
+    pid: str,
+    diagram_type: str = Query("dag", regex="^(dag|timeline|critical_path)$")
+):
+    """Get Mermaid diagram of mission dependencies and execution flow."""
+    conn = await db.get_db()
+    try:
+        rows = await conn.execute_fetchall("SELECT * FROM projects WHERE id=?", (pid,))
+        if not rows:
+            raise HTTPException(404, "Project not found")
+    finally:
+        await conn.close()
+
+    try:
+        graph = await generate_mission_graph(pid, diagram_type)
+        return {
+            "mermaid_diagram": graph,
+            "diagram_type": diagram_type,
+            "project_id": pid
+        }
+    except Exception as e:
+        log.exception("Mission graph generation failed")
+        raise HTTPException(500, f"Graph generation failed: {e}")
+
+
+@app.get("/api/projects/{pid}/missions/summary-diagram")
+async def api_project_summary(pid: str):
+    """Get high-level project summary diagram."""
+    conn = await db.get_db()
+    try:
+        rows = await conn.execute_fetchall("SELECT * FROM projects WHERE id=?", (pid,))
+        if not rows:
+            raise HTTPException(404, "Project not found")
+    finally:
+        await conn.close()
+
+    try:
+        diagram = await generate_project_summary_diagram(pid)
+        return {
+            "mermaid_diagram": diagram,
+            "project_id": pid
+        }
+    except Exception as e:
+        log.exception("Summary diagram generation failed")
+        raise HTTPException(500, f"Diagram generation failed: {e}")
+
+
+@app.get("/api/projects/{pid}/costs")
+async def api_cost_analysis(pid: str):
+    """Analyze project costs and suggest optimizations using batch analysis."""
+    conn = await db.get_db()
+    try:
+        rows = await conn.execute_fetchall("SELECT * FROM projects WHERE id=?", (pid,))
+        if not rows:
+            raise HTTPException(404, "Project not found")
+    finally:
+        await conn.close()
+
+    try:
+        analysis = await analyze_costs_and_optimize(pid)
+        return analysis
+    except Exception as e:
+        log.exception("Cost analysis failed")
+        raise HTTPException(500, f"Cost analysis failed: {e}")
+
+
+# ──────────────────────────────────────────────
 # Remote Control — Take over sessions from phone/browser
 # ──────────────────────────────────────────────
 
