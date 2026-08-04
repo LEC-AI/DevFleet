@@ -63,6 +63,16 @@ import random
 log = logging.getLogger("devfleet.sdk_engine")
 
 
+def _data_dir(*parts: str) -> str:
+    """Path inside the data directory, anchored on the DB location.
+
+    Not `<backend>/../data`: in Docker the backend is mounted at /app, so `..`
+    resolves to the filesystem root and every write lands on an unwritable
+    `/data`. DEVFLEET_DB is already the configured anchor, so use its directory.
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(db.DB_PATH)), *parts)
+
+
 def _stderr_log_path(session_id: str) -> str:
     """Per-session file the spawned Claude CLI writes its stderr/debug log into.
 
@@ -70,8 +80,7 @@ def _stderr_log_path(session_id: str) -> str:
     "Check stderr output for details" placeholder when the CLI exits non-zero.
     Tee'ing it to a file gives us real diagnostic info on failure.
     """
-    backend_dir = os.path.dirname(os.path.abspath(__file__))
-    log_dir = os.path.join(backend_dir, "..", "data", "logs")
+    log_dir = _data_dir("logs")
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, f"session-{session_id}.stderr.log")
 
@@ -352,9 +361,7 @@ async def _load_project_mcp_configs(project_id: str) -> dict:
 
 def _read_report_file(session_id: str) -> dict | None:
     """Read report JSON written by the stdio MCP submit_report tool."""
-    backend_dir = os.path.dirname(os.path.abspath(__file__))
-    report_dir = os.path.join(backend_dir, "..", "data", "reports")
-    report_path = os.path.join(report_dir, f"{session_id}.json")
+    report_path = _data_dir("reports", f"{session_id}.json")
     try:
         if os.path.exists(report_path):
             with open(report_path, "r") as f:
@@ -436,7 +443,7 @@ def _build_sdk_options(
         "DEVFLEET_MISSION_ID": mission.get("id", ""),
         "DEVFLEET_PROJECT_ID": mission.get("project_id", ""),
         "DEVFLEET_SESSION_ID": session_id,
-        "DEVFLEET_REPORT_DIR": os.path.join(backend_dir, "..", "data", "reports"),
+        "DEVFLEET_REPORT_DIR": _data_dir("reports"),
     }
 
     mcp_servers = {
