@@ -335,6 +335,112 @@ def cmd_dashboard(args):
         print()
 
 
+def _resolve_project(ref: str) -> dict:
+    """Find a project by id prefix or (case-insensitive) name."""
+    projects = _get("/api/projects")
+    ref_low = ref.lower()
+    matches = [p for p in projects
+               if p["id"].startswith(ref) or p.get("name", "").lower() == ref_low]
+    if not matches:
+        matches = [p for p in projects if ref_low in p.get("name", "").lower()]
+    if not matches:
+        print(f"{C.RED}No project matching '{ref}'.{C.RESET} Try: devfleet projects", file=sys.stderr)
+        sys.exit(1)
+    if len(matches) > 1:
+        print(f"{C.RED}'{ref}' matches {len(matches)} projects:{C.RESET}", file=sys.stderr)
+        for p in matches:
+            print(f"  {p['id'][:8]}  {p.get('name')}", file=sys.stderr)
+        sys.exit(1)
+    return matches[0]
+
+
+def cmd_add(args):
+    """Add a task to the overnight backlog."""
+    project = _resolve_project(args.project)
+    mission = _post("/api/missions", {
+        "project_id": project["id"],
+        "title": args.title,
+        "detailed_prompt": args.prompt or args.title,
+        "acceptance_criteria": args.criteria or "",
+        "priority": args.priority,
+        "mission_type": args.type,
+        "model": args.model,
+        "tags": ["backlog"],
+        "auto_dispatch": True,   # the watcher drains this during the night window
+    })
+    print()
+    print(f"  {C.GREEN}{C.BOLD}Queued{C.RESET} {C.DIM}#{mission.get('mission_number', '?')}"
+          f" {mission.get('id', '?')[:8]}{C.RESET}")
+    print(f"  {C.BOLD}{mission.get('title')}{C.RESET}")
+    print(f"  {C.DIM}{project.get('name')} — priority {args.priority} — {args.type}{C.RESET}")
+    print()
+
+
+def cmd_backlog(args):
+    """Show the queued backlog in the order the watcher will drain it."""
+    params = f"?project_id={args.project_id}" if args.project_id else ""
+    missions = [m for m in _get(f"/api/missions{params}") if m.get("status") == "draft"
+                and m.get("auto_dispatch") and not m.get("schedule_cron")]
+
+    gate = _get("/api/system/status").get("night_window", {})
+    if gate.get("enabled"):
+        open_now = gate.get("dispatch_open")
+        colour = C.GREEN if open_now else C.GRAY
+        label = "DISPATCHING" if open_now else "HOLDING"
+        print()
+        print(f"  {colour}{C.BOLD}● {label}{C.RESET}  {C.DIM}{gate.get('reason', '')}{C.RESET}")
+
+    if not missions:
+        print(f"\n  {C.DIM}Backlog empty.{C.RESET}\n")
+        return
+
+    # Same ordering the watcher uses: round-robin across projects, priority first
+    by_project: dict[str, list] = {}
+    for m in missions:
+        by_project.setdefault(m.get("project_name", "?"), []).append(m)
+    for items in by_project.values():
+        items.sort(key=lambda m: (-(m.get("priority") or 0), m.get("created_at") or ""))
+
+    print()
+    print(f"  {C.BOLD}Backlog ({len(missions)} queued across {len(by_project)} projects):{C.RESET}")
+    print()
+    for name, items in sorted(by_project.items()):
+        print(f"  {C.BLUE}{C.BOLD}{name}{C.RESET}")
+        for m in items:
+            prio = m.get("priority") or 0
+            pcolor = C.RED if prio >= 4 else C.YELLOW if prio >= 2 else C.GRAY
+            resume = f" {C.MAGENTA}↺ resuming{C.RESET}" if m.get("resume_session_id") else ""
+            print(f"    {pcolor}P{prio}{C.RESET} {_trunc(m.get('title', ''), 52):52s}"
+                  f" {C.DIM}{m.get('mission_type', '')}  {m.get('id', '?')[:8]}{C.RESET}{resume}")
+        print()
+
+
+def cmd_night(args):
+    """Show the night window state."""
+    status = _get("/api/system/status")
+    gate = status.get("night_window", {})
+
+    print()
+    print(f"  {C.BOLD}{C.CYAN}Night Window{C.RESET}")
+    print()
+    if not gate.get("enabled"):
+        print(f"  {C.YELLOW}Disabled{C.RESET} {C.DIM}— dispatch runs 24/7{C.RESET}\n")
+        return
+
+    open_now = gate.get("dispatch_open")
+    print(f"  Dispatch:  {(C.GREEN + 'OPEN') if open_now else (C.GRAY + 'CLOSED')}{C.RESET}"
+          f"  {C.DIM}{gate.get('reason', '')}{C.RESET}")
+    print(f"  Now:       {gate.get('now', '?')[:16]}  {C.DIM}{gate.get('timezone', '')}{C.RESET}")
+    print(f"  Night:     {gate.get('night_start', '?')[11:16]} → {gate.get('night_end', '?')[11:16]}")
+    print(f"  Day start: {gate.get('day_start', '?')[11:16]}  {C.DIM}quota reserved from here{C.RESET}")
+    print(f"  Window:    #{gate.get('session_window', '?')}  "
+          f"{gate.get('session_window_start', '?')[11:16]} → {gate.get('session_window_end', '?')[11:16]}")
+    print()
+    print(f"  Agents:    {C.YELLOW}{status.get('running_agents', 0)}{C.RESET} / {status.get('max_agents', 3)}"
+          f"  {C.DIM}({status.get('mission_watcher', {}).get('night_sessions', 0)} started tonight){C.RESET}")
+    print()
+
+
 def cmd_plugins(args):
     """Show loaded plugins."""
     data = _get("/api/plugins")
@@ -409,6 +515,26 @@ def main():
     p_report = sub.add_parser("report", help="Show latest mission report")
     p_report.add_argument("mission_id", help="Mission ID")
 
+    # add — queue a task for the overnight backlog
+    p_add = sub.add_parser("add", help="Add a task to the overnight backlog")
+    p_add.add_argument("project", help="Project name or ID prefix")
+    p_add.add_argument("title", help="What to do, e.g. \"fix the login redirect loop\"")
+    p_add.add_argument("-p", "--priority", type=int, default=2,
+                       help="0-5, higher goes first (default: 2)")
+    p_add.add_argument("-t", "--type", default="fix",
+                       choices=["fix", "implement", "review", "test", "explore"],
+                       help="Mission type (default: fix)")
+    p_add.add_argument("--prompt", help="Fuller instructions (default: the title)")
+    p_add.add_argument("--criteria", help="Acceptance criteria — what 'done' means")
+    p_add.add_argument("--model", default="claude-opus-4-6", help="Model to use")
+
+    # backlog
+    p_backlog = sub.add_parser("backlog", help="Show the queued overnight backlog")
+    p_backlog.add_argument("project_id", nargs="?", default=None, help="Filter by project ID")
+
+    # night
+    sub.add_parser("night", help="Show the night window state")
+
     # dashboard
     sub.add_parser("dashboard", help="Show dashboard stats")
 
@@ -428,6 +554,9 @@ def main():
         "dispatch": cmd_dispatch,
         "status": cmd_status,
         "report": cmd_report,
+        "add": cmd_add,
+        "backlog": cmd_backlog,
+        "night": cmd_night,
         "dashboard": cmd_dashboard,
         "plugins": cmd_plugins,
     }

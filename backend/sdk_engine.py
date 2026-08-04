@@ -318,7 +318,7 @@ running_tasks: dict[str, asyncio.Task] = {}
 _subscribers: dict[str, list[asyncio.Queue]] = {}
 _event_buffers: dict[str, list[dict]] = {}
 # Sessions being taken over — worktree is preserved on cancel
-_takeover_sessions: set[str] = {}
+_takeover_sessions: set[str] = set()   # `{}` is a dict: .add()/.discard() blew up
 
 
 # ── MCP Server Integration (Phase 2) ──

@@ -25,6 +25,7 @@ import uuid
 from datetime import datetime, timezone
 
 import db
+import night_window
 from prompt_template import build_prompt
 
 # Use SDK engine if available, fall back to CLI dispatcher
@@ -251,6 +252,15 @@ async def auto_loop(project_id: str, goal: str):
     max_iterations = 20  # Safety limit
 
     while iteration < max_iterations:
+        # Same gate as the mission watcher: never open a 5h quota window that
+        # would still be live when the human starts work. Sleep, don't exit —
+        # the loop picks up again when the night window reopens.
+        gate = night_window.state()
+        if not gate["dispatch_open"]:
+            log.info("Auto-loop waiting for night window: %s", gate["reason"])
+            await asyncio.sleep(60)
+            continue
+
         iteration += 1
         log.info("Auto-loop iteration %d for project %s", iteration, project["name"])
 

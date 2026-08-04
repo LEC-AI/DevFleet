@@ -418,6 +418,8 @@ body {
 .status-badge--completed { background: var(--success-soft); color: var(--status-completed); }
 .status-badge--failed { background: var(--danger-soft); color: var(--status-failed); }
 .status-badge--cancelled { background: rgba(161, 161, 170, 0.1); color: var(--status-cancelled); }
+/* Paused by the night window — worktree kept, resumes next night */
+.status-badge--paused { background: var(--info-soft); color: var(--status-queued); }
 
 /* ── Buttons ── */
 .btn {

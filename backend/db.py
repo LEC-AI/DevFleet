@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS missions (
     schedule_enabled INTEGER DEFAULT 0,
     last_scheduled_at TEXT,
     mission_number INTEGER,
-    callback_url TEXT DEFAULT ''
+    callback_url TEXT DEFAULT '',
+    resume_session_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -197,6 +198,8 @@ async def init_db():
             "ALTER TABLE projects ADD COLUMN parent_team TEXT DEFAULT ''",
             "ALTER TABLE projects ADD COLUMN teams_channel_id TEXT DEFAULT ''",
             "ALTER TABLE projects ADD COLUMN teams_channel_name TEXT DEFAULT ''",
+            # v8: Night window — session paused at dawn, resumed the next night
+            "ALTER TABLE missions ADD COLUMN resume_session_id TEXT",
         ]
         for migration in migrations:
             try:

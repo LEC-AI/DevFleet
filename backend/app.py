@@ -18,6 +18,7 @@ from models import (ProjectCreate, ProjectUpdate, MissionCreate, MissionUpdate,
                     McpServerCreate)
 import health_checker
 import mission_watcher
+import night_window
 import scheduler
 from autoloop import start_auto_loop, stop_auto_loop, get_auto_loop_status
 from remote_control import (start_remote_control, stop_remote_control,
@@ -2078,7 +2079,7 @@ async def list_mission_events(mid: str, limit: int = Query(20)):
 
 @app.get("/api/system/status")
 async def system_status():
-    """Get system-wide status: watcher, scheduler, running agents."""
+    """Get system-wide status: watcher, scheduler, running agents, night window."""
     running_count = sum(1 for t in running_tasks.values() if not t.done())
     return {
         "running_agents": running_count,
@@ -2086,6 +2087,7 @@ async def system_status():
         "engine": "sdk" if USE_SDK_ENGINE else "cli",
         "mission_watcher": mission_watcher.get_watcher_status(),
         "scheduler": scheduler.get_scheduler_status(),
+        "night_window": night_window.state(),
     }
 
 
