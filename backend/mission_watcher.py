@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 
 import db
 import night_window
+import usage_budget
 
 log = logging.getLogger("devfleet.mission_watcher")
 
@@ -36,6 +37,7 @@ MAX_CONCURRENT_AGENTS = int(os.environ.get("DEVFLEET_MAX_AGENTS", "3"))
 # alone.
 _night_sessions: dict[str, str] = {}
 _last_gate_reason = ""
+_last_budget_reason = ""
 
 
 async def _find_eligible_missions(limit: int) -> list[dict]:
@@ -218,7 +220,7 @@ async def _pause_night_agents():
 
 async def _watch_loop():
     """Main polling loop — find and dispatch eligible missions."""
-    global _last_gate_reason
+    global _last_gate_reason, _last_budget_reason
     log.info("Mission watcher started (poll every %ds)", POLL_INTERVAL)
 
     while True:
@@ -234,6 +236,18 @@ async def _watch_loop():
             if gate["hard_stop"]:
                 await _pause_night_agents()
             elif gate["dispatch_open"]:
+                # Clock says go; spend still has to agree. Checked here rather
+                # than inside night_window so the time gate stays pure/sync.
+                budget = await usage_budget.state(gate.get("session_window_start"),
+                                                 weekend=gate.get("weekend", False))
+                if not budget["dispatch_open"]:
+                    if budget["reason"] != _last_budget_reason:
+                        log.warning("Holding dispatch — %s", budget["reason"])
+                        _last_budget_reason = budget["reason"]
+                    await asyncio.sleep(POLL_INTERVAL)
+                    continue
+                _last_budget_reason = ""
+
                 running = sum(1 for t in running_tasks.values() if not t.done())
                 slots = MAX_CONCURRENT_AGENTS - running
 

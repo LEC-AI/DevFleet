@@ -328,6 +328,10 @@ _subscribers: dict[str, list[asyncio.Queue]] = {}
 _event_buffers: dict[str, list[dict]] = {}
 # Sessions being taken over — worktree is preserved on cancel
 _takeover_sessions: set[str] = set()   # `{}` is a dict: .add()/.discard() blew up
+# session_id → {cost, tokens} for sessions still streaming. The DB only gets
+# total_cost_usd at a terminal state, so usage_budget reads this for in-flight
+# spend. Cleared in the finally block alongside running_tasks.
+live_usage: dict[str, dict] = {}
 
 
 # ── MCP Server Integration (Phase 2) ──
@@ -770,6 +774,11 @@ async def _run_agent(
                             total_tokens = existing_tokens + input_t + output_t
                         if cost:
                             total_cost = existing_cost + cost
+                        # Publish live spend: total_cost_usd is only written to the
+                        # DB at a terminal state, so usage_budget would otherwise be
+                        # blind to everything currently in flight and could overshoot
+                        # a cap by a whole mission per agent.
+                        live_usage[session_id] = {"cost": total_cost, "tokens": total_tokens}
                         if cost or usage:
                             _broadcast(session_id, {
                                 "type": "usage",
@@ -1142,6 +1151,7 @@ async def _run_agent(
 
     finally:
         running_tasks.pop(session_id, None)
+        live_usage.pop(session_id, None)   # settled spend is in the DB now
         _event_buffers.pop(session_id, None)
         if stderr_file is not None:
             try:

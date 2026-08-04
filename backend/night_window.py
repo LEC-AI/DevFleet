@@ -18,13 +18,22 @@ Three phases per night (defaults, Europe/London):
 The 07:00 cutoff is not configured, it falls out of the window arithmetic. Move
 NIGHT_START or DAY_START and it moves with them.
 
+Weekend nights (Fri and Sat evenings by default) trade one guard for the other:
+the clock stops holding dispatch back — it runs straight through to
+DEVFLEET_WEEKEND_END (09:00) with no window-overrun check — and the spend cap
+takes over as the thing protecting anyone who works on a Saturday. See
+usage_budget.WEEKEND_BUDGET_PCT, which keeps a slice of each window in reserve.
+
 Env:
-    DEVFLEET_NIGHT_ENABLED  default true   — false restores 24/7 dispatch
-    DEVFLEET_TZ             default Europe/London
-    DEVFLEET_NIGHT_START    default 21:00  — dispatch may open
-    DEVFLEET_NIGHT_END      default 08:30  — hard stop
-    DEVFLEET_DAY_START      default 09:00  — human needs full quota from here
-    DEVFLEET_SESSION_HOURS  default 5      — Anthropic session window length
+    DEVFLEET_NIGHT_ENABLED   default true   — false restores 24/7 dispatch
+    DEVFLEET_TZ              default Europe/London
+    DEVFLEET_NIGHT_START     default 21:00  — dispatch may open
+    DEVFLEET_NIGHT_END       default 08:30  — hard stop (weeknights)
+    DEVFLEET_DAY_START       default 09:00  — human needs full quota from here
+    DEVFLEET_SESSION_HOURS   default 5      — Anthropic session window length
+    DEVFLEET_WEEKEND_ENABLED default true   — false treats every night alike
+    DEVFLEET_WEEKEND_NIGHTS  default 4,5    — Mon=0, so Fri+Sat evenings
+    DEVFLEET_WEEKEND_END     default 09:00  — weekend hard stop
 """
 
 import os
@@ -43,6 +52,12 @@ NIGHT_START = _hhmm("DEVFLEET_NIGHT_START", "21:00")
 NIGHT_END = _hhmm("DEVFLEET_NIGHT_END", "08:30")
 DAY_START = _hhmm("DEVFLEET_DAY_START", "09:00")
 SESSION_HOURS = float(os.environ.get("DEVFLEET_SESSION_HOURS", "5"))
+WEEKEND_ENABLED = os.environ.get("DEVFLEET_WEEKEND_ENABLED", "true").lower() == "true"
+# Weekday of the *evening* the night starts on. Mon=0, so 4,5 = Friday and
+# Saturday evenings — the nights whose mornings are Sat and Sun. Sunday evening
+# runs into a workday, so it deliberately keeps weeknight rules.
+WEEKEND_NIGHTS = {int(d) for d in os.environ.get("DEVFLEET_WEEKEND_NIGHTS", "4,5").split(",") if d.strip()}
+WEEKEND_END = _hhmm("DEVFLEET_WEEKEND_END", "09:00")
 
 
 def _at(day: datetime, t: time) -> datetime:
@@ -59,18 +74,22 @@ def _elapsed_plus(anchor: datetime, hours: float) -> datetime:
     return (anchor.astimezone(timezone.utc) + timedelta(hours=hours)).astimezone(anchor.tzinfo)
 
 
-def _bounds(now: datetime) -> tuple[datetime, datetime, datetime]:
-    """(night_start, night_end, day_start) for the night `now` sits in."""
+def _bounds(now: datetime) -> tuple[datetime, datetime, datetime, bool]:
+    """(night_start, night_end, day_start, is_weekend) for the night `now` sits in."""
     anchor = _at(now, NIGHT_START)
     if now < anchor:
         anchor -= timedelta(days=1)  # we're past midnight, night began yesterday
-    night_end = _at(anchor, NIGHT_END)
+
+    is_weekend = WEEKEND_ENABLED and anchor.weekday() in WEEKEND_NIGHTS
+
+    end_time = WEEKEND_END if is_weekend else NIGHT_END
+    night_end = _at(anchor, end_time)
     if night_end <= anchor:
         night_end += timedelta(days=1)
     day_start = _at(anchor, DAY_START)
     if day_start <= anchor:
         day_start += timedelta(days=1)
-    return anchor, night_end, day_start
+    return anchor, night_end, day_start, is_weekend
 
 
 def state(now: datetime | None = None) -> dict:
@@ -81,26 +100,32 @@ def state(now: datetime | None = None) -> dict:
         return {"enabled": False, "dispatch_open": True, "hard_stop": False,
                 "now": now.isoformat(), "reason": "night window disabled"}
 
-    night_start, night_end, day_start = _bounds(now)
+    night_start, night_end, day_start, is_weekend = _bounds(now)
     in_night = night_start <= now < night_end
 
     index = int((now - night_start).total_seconds() / 3600 // SESSION_HOURS)
     window_start = _elapsed_plus(night_start, SESSION_HOURS * index)
     window_end = _elapsed_plus(night_start, SESSION_HOURS * (index + 1))
-    window_safe = window_end <= day_start
+    # Weeknights: never open a window that outlives the human's day start.
+    # Weekend nights: run right through — the spend cap is the guard instead.
+    window_safe = True if is_weekend else window_end <= day_start
 
     if not in_night:
         reason = (f"outside night window "
-                  f"({NIGHT_START:%H:%M}–{NIGHT_END:%H:%M} {TZ.key})")
+                  f"({NIGHT_START:%H:%M}–{night_end:%H:%M} {TZ.key})")
     elif not window_safe:
         reason = (f"draining only — session window {index} would stay open "
                   f"until {window_end:%H:%M}, past day start {DAY_START:%H:%M}")
+    elif is_weekend:
+        reason = (f"open (weekend) — runs to {WEEKEND_END:%H:%M}, "
+                  f"spend cap is the guard")
     else:
         reason = f"open — session window {index} ends {window_end:%H:%M}"
 
     return {
         "enabled": True,
         "in_night": in_night,
+        "weekend": is_weekend,
         "dispatch_open": in_night and window_safe,
         "hard_stop": not in_night,
         "now": now.isoformat(),
