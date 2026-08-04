@@ -123,6 +123,14 @@ async def _merge_branch_via_plumbing(project_path: str, branch_name: str, short_
     the working tree. Returns True on success (including no-op), False if the
     branch couldn't be merged cleanly — caller should preserve the worktree.
     """
+    # Snapshot working-tree cleanliness BEFORE touching any ref. The post-merge
+    # sync below used to test this *after* update-ref, by which point the ref
+    # advance itself shows up as staged changes — so the check could never pass
+    # and the sync never ran. See the sync block at the end of this function.
+    code, pre_status, _ = await _run(
+        ["git", "status", "--porcelain", "--untracked-files=no"], project_path)
+    was_clean = (code == 0 and not pre_status.strip())
+
     # Fetch latest from origin so we merge against the real remote HEAD,
     # not a stale local cache.
     code, _, fetch_err = await _run(["git", "fetch", "origin"], project_path)
@@ -313,16 +321,26 @@ async def _merge_branch_via_plumbing(project_path: str, branch_name: str, short_
         log.warning("session %s: push to origin/%s failed: %s",
                     short_id, short_ref, push_err[:200])
 
-    # Best-effort: if the project's working tree is clean, sync index+WD to the
-    # new ref. If it's dirty, we leave it — the ref still advanced, and whoever
-    # owns those uncommitted edits can deal with them.
-    code, status_lines, _ = await _run(["git", "status", "--porcelain"], project_path)
-    if code == 0 and not status_lines.strip():
-        await _run(["git", "reset", "--hard", target_ref], project_path)
-        log.info("session %s: synced clean project WD to %s", short_id, target_ref)
+    # Sync index+WD to the new ref if the tree was clean when we started. Uses
+    # the `was_clean` snapshot taken before any ref moved: testing cleanliness
+    # here is useless, because advancing the ref is itself reported as staged
+    # changes. That bug left HEAD ahead of the index, which git shows as staged
+    # *deletions* of the agent's work — so a later `git commit` in the project
+    # silently reverted the whole session.
+    if was_clean:
+        code, _, reset_err = await _run(["git", "reset", "--hard", target_ref], project_path)
+        if code != 0:
+            log.warning("session %s: WD sync to %s failed: %s",
+                        short_id, target_ref, reset_err[:200])
+        else:
+            log.info("session %s: synced clean project WD to %s", short_id, target_ref)
     else:
-        log.info(
-            "session %s: project WD has uncommitted changes; %s advanced, WD untouched",
-            short_id, target_ref,
+        # Genuine local edits — don't clobber them. The ref advanced, so the
+        # project now shows the agent's commits as staged reversals until whoever
+        # owns those edits reconciles (`git stash && git reset --hard HEAD`).
+        log.warning(
+            "session %s: project WD had uncommitted changes; %s advanced but WD "
+            "left alone — `git status` will show the agent's work as staged "
+            "reversals until you reconcile", short_id, target_ref,
         )
     return True
