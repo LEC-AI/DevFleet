@@ -104,6 +104,16 @@ export function listReports(filters = {}) {
 }
 export const getReport = (id) => request(`/reports/${id}`);
 
+// ── Team (one tab / dashboard per person) ──
+export const listTeam = () => request('/team');
+export const createTeamMember = (data) => request('/team', { method: 'POST', body: JSON.stringify(data) });
+export const deleteTeamMember = (id) => request(`/team/${id}`, { method: 'DELETE' });
+export const getMemberDashboard = (id) => request(`/team/${id}/dashboard`);
+export const getMemberReadiness = (id) => request(`/team/${id}/readiness`);
+export const setMemberCredentials = (id, data) =>
+  request(`/team/${id}/credentials`, { method: 'POST', body: JSON.stringify(data) });
+export const verifyMember = (id) => request(`/team/${id}/verify`, { method: 'POST' });
+
 // ── Dashboard ──
 export const getDashboardStats = () => request('/dashboard/stats');
 

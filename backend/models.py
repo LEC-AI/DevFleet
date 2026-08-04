@@ -4,7 +4,9 @@ from typing import Optional, List
 
 class ProjectCreate(BaseModel):
     name: str
-    path: str
+    # Derived from owner + name when owner is set (workspace-scoped). Only
+    # needed for ownerless projects pointing at a repo already on disk.
+    path: str = ""
     description: str = ""
     system_prompt: str = ""
     # Lifecycle + ownership fields
@@ -82,6 +84,7 @@ class MissionCreate(BaseModel):
     callback_url: Optional[str] = None       # POST here on mission complete/failed
     max_retries: int = 3                     # auto-retry on transient API errors
     auto_retry: bool = True                  # enable/disable auto-retry
+    assignee: Optional[str] = None           # team_members.id — whose tab it shows on
 
 
 class MissionUpdate(BaseModel):
@@ -102,6 +105,7 @@ class MissionUpdate(BaseModel):
     schedule_cron: Optional[str] = None
     schedule_enabled: Optional[bool] = None
     callback_url: Optional[str] = None
+    assignee: Optional[str] = None           # reassign to another team member
 
 
 class ServiceCreate(BaseModel):

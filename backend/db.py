@@ -20,6 +20,24 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Team members get their own tab / dashboard. Not an auth identity yet: the API
+-- has no authentication, so this is attribution and filtering only. Credential
+-- columns land here once the auth mechanism is decided.
+CREATE TABLE IF NOT EXISTS team_members (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    display_name TEXT DEFAULT '',
+    accent TEXT DEFAULT '',
+    sort_order INTEGER DEFAULT 100,
+    -- Readiness only. Tokens live in a 0600 file per member (credentials.py),
+    -- never in the DB, so they stay out of backups and DB dumps.
+    linux_user TEXT DEFAULT '',
+    github_login TEXT DEFAULT '',
+    github_verified_at TEXT,
+    claude_verified_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS missions (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -44,8 +62,11 @@ CREATE TABLE IF NOT EXISTS missions (
     last_scheduled_at TEXT,
     mission_number INTEGER,
     callback_url TEXT DEFAULT '',
-    resume_session_id TEXT
+    resume_session_id TEXT,
+    assignee TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_missions_assignee ON missions(assignee);
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
     id TEXT PRIMARY KEY,
@@ -200,12 +221,37 @@ async def init_db():
             "ALTER TABLE projects ADD COLUMN teams_channel_name TEXT DEFAULT ''",
             # v8: Night window — session paused at dawn, resumed the next night
             "ALTER TABLE missions ADD COLUMN resume_session_id TEXT",
+            # v9: Per-member dashboards — who a mission belongs to
+            "ALTER TABLE missions ADD COLUMN assignee TEXT",
+            # v10: Environment readiness. Tokens are NOT here — see credentials.py.
+            "ALTER TABLE team_members ADD COLUMN linux_user TEXT DEFAULT ''",
+            "ALTER TABLE team_members ADD COLUMN github_login TEXT DEFAULT ''",
+            "ALTER TABLE team_members ADD COLUMN github_verified_at TEXT",
+            "ALTER TABLE team_members ADD COLUMN claude_verified_at TEXT",
         ]
         for migration in migrations:
             try:
                 await db.execute(migration)
             except Exception:
                 pass  # Column already exists
+
+        # Seed the team on a fresh install so the tabs aren't empty. Names come
+        # from DEVFLEET_TEAM (comma-separated); INSERT OR IGNORE means renaming
+        # or deleting someone in the UI is not undone on restart.
+        team = os.environ.get(
+            "DEVFLEET_TEAM",
+            "Tolu Adeyemo,Avdhesh Singh Chouhan,Mohammed Kaif Kohari,"
+            "Mehdi Moghadam,Abdul Mubeen,Mingwei Yan",
+        )
+        for order, raw in enumerate(team.split(",")):
+            name = raw.strip()
+            if not name:
+                continue
+            await db.execute(
+                "INSERT OR IGNORE INTO team_members (id, name, display_name, sort_order) "
+                "VALUES (?, ?, ?, ?)",
+                (name.lower().replace(" ", "-"), name, name, order),
+            )
 
         # Backfill mission_number for existing missions that don't have one
         # Use a CTE with ROW_NUMBER to assign sequential numbers per project
