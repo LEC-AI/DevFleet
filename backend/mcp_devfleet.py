@@ -24,6 +24,7 @@ DEVFLEET_API = os.environ.get("DEVFLEET_API_URL", "http://localhost:18801")
 MISSION_ID = os.environ.get("DEVFLEET_MISSION_ID", "")
 PROJECT_ID = os.environ.get("DEVFLEET_PROJECT_ID", "")
 SESSION_ID = os.environ.get("DEVFLEET_SESSION_ID", "")
+ASSIGNEE = os.environ.get("DEVFLEET_ASSIGNEE", "")
 
 server = Server("devfleet-tools")
 
@@ -218,6 +219,7 @@ async def _create_sub_mission(args: dict) -> list[types.TextContent]:
         "parent_mission_id": MISSION_ID or None,
         "depends_on": depends_on,
         "auto_dispatch": True,
+        "assignee": ASSIGNEE or None,   # stays on the same member's tab
     })
 
     if result:
@@ -249,6 +251,7 @@ async def _request_review(args: dict) -> list[types.TextContent]:
         "parent_mission_id": MISSION_ID or None,
         "depends_on": depends_on,
         "auto_dispatch": True,
+        "assignee": ASSIGNEE or None,   # stays on the same member's tab
     })
 
     if result:

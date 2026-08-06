@@ -300,7 +300,9 @@ export default function Dashboard({ navigate, memberId = null }) {
         />
         <StatsCard
           label="Running Agents"
-          value={`${stats.running_agents} / ${stats.max_agents}`}
+          value={stats.max_agents == null
+            ? `${stats.running_agents}`
+            : `${stats.running_agents} / ${stats.max_agents}`}
           accent={hasRunning}
           icon={ICONS.cpu}
           color={hasRunning ? 'var(--warning)' : undefined}
@@ -323,8 +325,9 @@ export default function Dashboard({ navigate, memberId = null }) {
         </div>
       )}
 
-      {/* ── AI Planner ── */}
-      <div style={{
+      {/* ── AI Planner — master only; a member's tab assigns work, it doesn't
+             spawn global unassigned projects ── */}
+      {!memberId && <div style={{
         marginBottom: 28,
         padding: '20px 24px',
         background: 'linear-gradient(135deg, rgba(218,119,86,0.06) 0%, rgba(59,130,246,0.04) 100%)',
@@ -461,10 +464,10 @@ export default function Dashboard({ navigate, memberId = null }) {
             </p>
           </div>
         )}
-      </div>
+      </div>}
 
-      {/* ── Quick Actions ── */}
-      <div style={{
+      {/* ── Quick Actions — master only; members queue work via AssignTask ── */}
+      {!memberId && <div style={{
         display: 'flex',
         gap: 12,
         marginBottom: 32,
@@ -472,7 +475,7 @@ export default function Dashboard({ navigate, memberId = null }) {
       }}>
         <button
           className="btn btn-primary"
-          onClick={() => navigate('missions')}
+          onClick={() => navigate('projects')}
           style={{
             padding: '12px 24px',
             fontSize: 14,
@@ -526,7 +529,7 @@ export default function Dashboard({ navigate, memberId = null }) {
             Watch Live
           </button>
         )}
-      </div>
+      </div>}
 
       {/* ── Console: everything happening, live ── */}
       <SessionConsole
@@ -568,7 +571,7 @@ export default function Dashboard({ navigate, memberId = null }) {
             <div
               key={s.id}
               className="activity-item"
-              onClick={() => s.status === 'running' ? navigate('live', s.id) : navigate('missions')}
+              onClick={() => s.status === 'running' ? navigate('live', s.id) : null}
               style={{
                 transition: 'all 0.2s',
                 borderLeft: s.status === 'running'

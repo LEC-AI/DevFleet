@@ -66,8 +66,6 @@ CREATE TABLE IF NOT EXISTS missions (
     assignee TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_missions_assignee ON missions(assignee);
-
 CREATE TABLE IF NOT EXISTS agent_sessions (
     id TEXT PRIMARY KEY,
     mission_id TEXT NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
@@ -221,8 +219,12 @@ async def init_db():
             "ALTER TABLE projects ADD COLUMN teams_channel_name TEXT DEFAULT ''",
             # v8: Night window — session paused at dawn, resumed the next night
             "ALTER TABLE missions ADD COLUMN resume_session_id TEXT",
-            # v9: Per-member dashboards — who a mission belongs to
+            # v9: Per-member dashboards — who a mission belongs to.
+            # The index lives here, NOT in SCHEMA: executescript(SCHEMA) runs
+            # before these ALTERs, so on a pre-v9 DB the column doesn't exist
+            # yet and indexing it there crash-loops the whole app at startup.
             "ALTER TABLE missions ADD COLUMN assignee TEXT",
+            "CREATE INDEX IF NOT EXISTS idx_missions_assignee ON missions(assignee)",
             # v10: Environment readiness. Tokens are NOT here — see credentials.py.
             "ALTER TABLE team_members ADD COLUMN linux_user TEXT DEFAULT ''",
             "ALTER TABLE team_members ADD COLUMN github_login TEXT DEFAULT ''",
@@ -236,22 +238,30 @@ async def init_db():
                 pass  # Column already exists
 
         # Seed the team on a fresh install so the tabs aren't empty. Names come
-        # from DEVFLEET_TEAM (comma-separated); INSERT OR IGNORE means renaming
-        # or deleting someone in the UI is not undone on restart.
-        team = os.environ.get(
-            "DEVFLEET_TEAM",
-            "Tolu Adeyemo,Avdhesh Singh Chouhan,Mohammed Kaif Kohari,"
-            "Mehdi Moghadam,Abdul Mubeen,Mingwei Yan",
-        )
-        for order, raw in enumerate(team.split(",")):
-            name = raw.strip()
-            if not name:
-                continue
-            await db.execute(
-                "INSERT OR IGNORE INTO team_members (id, name, display_name, sort_order) "
-                "VALUES (?, ?, ?, ?)",
-                (name.lower().replace(" ", "-"), name, name, order),
+        # from DEVFLEET_TEAM (comma-separated). Seeding only runs when the table
+        # is empty — re-seeding on every boot would resurrect members deleted in
+        # the UI. Later joiners are added via POST /api/team.
+        async with db.execute("SELECT COUNT(*) FROM team_members") as cur:
+            existing_members = (await cur.fetchone())[0]
+        if existing_members == 0:
+            import workspace
+            team = os.environ.get(
+                "DEVFLEET_TEAM",
+                "Tolu Adeyemo,Avdhesh Singh Chouhan,Mohammed Kaif Kohari,"
+                "Mehdi Moghadam,Abdul Mubeen,Mingwei Yan",
             )
+            for order, raw in enumerate(team.split(",")):
+                name = raw.strip()
+                if not name:
+                    continue
+                # workspace.slug so the id IS its own slug: secrets files and
+                # workspace dirs are keyed on slug(id), and two distinct ids
+                # must never collapse to the same directory.
+                await db.execute(
+                    "INSERT OR IGNORE INTO team_members (id, name, display_name, sort_order) "
+                    "VALUES (?, ?, ?, ?)",
+                    (workspace.slug(name), name, name, order),
+                )
 
         # Backfill mission_number for existing missions that don't have one
         # Use a CTE with ROW_NUMBER to assign sequential numbers per project

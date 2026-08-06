@@ -318,6 +318,15 @@ async def update_project(pid: str, body: ProjectUpdate):
         updates = body.model_dump(exclude_none=True)
         if not updates:
             return dict(rows[0])
+        current = dict(rows[0])
+        # Confinement holds for the project's lifetime, not just at creation:
+        # a member project's path is derived from owner + name, and re-pointing
+        # it (or handing an arbitrary-path project to a member) would send that
+        # member's agents anywhere on disk.
+        if "owner" in updates and (updates["owner"] or "") != (current.get("owner") or ""):
+            raise HTTPException(400, "owner is fixed at creation — create a new project for that member")
+        if "path" in updates and current.get("owner"):
+            raise HTTPException(400, "A member project's path is derived from its owner and name — it cannot be re-pointed")
         if "path" in updates and not os.path.isdir(resolve_path(updates["path"])):
             raise HTTPException(400, f"Path does not exist: {updates['path']}")
         sets = ", ".join(f"{k}=?" for k in updates)
@@ -386,13 +395,30 @@ async def list_missions(
         await conn.close()
 
 
+async def _check_assignee(conn, assignee: str, project_owner: str):
+    """A member's missions live in that member's own project — full stop.
+
+    Without this, one member's tab can create and dispatch work inside another
+    member's confined workspace, invisible to its owner (their dashboard filters
+    on assignee, not on whose workspace was written to)."""
+    rows = await conn.execute_fetchall("SELECT id FROM team_members WHERE id=?", (assignee,))
+    if not rows:
+        raise HTTPException(400, f"Unknown assignee '{assignee}'")
+    if project_owner != assignee:
+        detail = f"it belongs to '{project_owner}'" if project_owner else "it has no owner"
+        raise HTTPException(
+            400, f"Missions for '{assignee}' must live in their own project — {detail}")
+
+
 @app.post("/api/missions", status_code=201)
 async def create_mission(body: MissionCreate):
     conn = await db.get_db()
     try:
-        rows = await conn.execute_fetchall("SELECT id FROM projects WHERE id=?", (body.project_id,))
+        rows = await conn.execute_fetchall("SELECT id, owner FROM projects WHERE id=?", (body.project_id,))
         if not rows:
             raise HTTPException(400, "Project not found")
+        if body.assignee:
+            await _check_assignee(conn, body.assignee, dict(rows[0]).get("owner") or "")
         mid = str(uuid.uuid4())
         schedule_enabled = 1 if body.schedule_cron else 0
         # Get next mission number for this project
@@ -554,6 +580,11 @@ async def update_mission(mid: str, body: MissionUpdate):
         updates = body.model_dump(exclude_none=True)
         if not updates:
             return dict(rows[0])
+        if updates.get("assignee"):
+            proj = await conn.execute_fetchall(
+                "SELECT owner FROM projects WHERE id=?", (dict(rows[0])["project_id"],))
+            await _check_assignee(conn, updates["assignee"],
+                                  (dict(proj[0]).get("owner") or "") if proj else "")
         if "tags" in updates:
             updates["tags"] = json.dumps(updates["tags"])
         if "depends_on" in updates:
@@ -1072,7 +1103,10 @@ async def create_team_member(body: TeamMemberCreate):
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "Name is required")
-    mid = name.lower().replace(" ", "-")
+    # slug() so the id IS its own slug: secrets files and workspace dirs are
+    # keyed on slug(id), and two ids that slug identically ('kai@f', 'kai-f')
+    # would otherwise share a workspace and a token file.
+    mid = workspace.slug(name)
     conn = await db.get_db()
     try:
         try:
@@ -1100,6 +1134,8 @@ async def delete_team_member(member_id: str):
         await conn.commit()
     finally:
         await conn.close()
+    # Their tokens go too — leftovers would resurrect under a re-added name.
+    credentials.delete(member_id)
 
 
 class MemberCredentials(BaseModel):
@@ -1308,7 +1344,9 @@ async def dashboard_stats():
                FROM agent_sessions s
                JOIN missions m ON m.id = s.mission_id
                JOIN projects p ON p.id = m.project_id
-               ORDER BY s.started_at DESC LIMIT 10"""
+               ORDER BY CASE WHEN s.status IN ('running','paused','takeover')
+                             THEN 0 ELSE 1 END,
+                        s.started_at DESC LIMIT 10"""
         )
         return {
             "total_projects": dict(projects[0])["c"],

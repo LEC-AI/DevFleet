@@ -11,6 +11,9 @@ services:
       # SQLite database — persisted on host
       - ./data:/app/data
 
+      # Member workspaces + 0600 token files — persisted on host
+      - ./workspaces:/app/workspaces
+
       # Claude CLI binary + config — mounted from host
       - ${HOME}/.local/share/claude:/home/devfleet/.local/share/claude:ro
       - ${HOME}/.local/bin/claude:/usr/local/bin/claude:ro
@@ -22,6 +25,9 @@ services:
       - ${DEVFLEET_PROJECTS_HOST:-${HOME}/projects}:/workspace/projects
     environment:
       - DEVFLEET_DB=/app/data/devfleet.db
+      # Explicit: the in-code default derives from the module path, which in
+      # this image would land at /workspaces (unwritable, not a volume).
+      - DEVFLEET_WORKSPACE_ROOT=/app/workspaces
       - DEVFLEET_MAX_AGENTS=${DEVFLEET_MAX_AGENTS:-3}
       - DEVFLEET_PROJECTS_DIR=/workspace/projects
       - HOME=/home/devfleet

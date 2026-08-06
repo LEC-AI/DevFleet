@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import stat
+import subprocess
 
 log = logging.getLogger("devfleet.workspace")
 
@@ -87,14 +88,35 @@ def enforce_commit_prefix(repo_path: str) -> bool:
     """Install a commit-msg hook so every commit here carries the prefix.
 
     A hook is used rather than instructions in the prompt because the agent runs
-    `git commit` itself — asking nicely is not enforcement. Per-worktree
-    core.hooksPath needs extensions.worktreeConfig, which is enabled here.
+    `git commit` itself — asking nicely is not enforcement. It goes into the
+    repo's *real* hooks directory (`git rev-parse --git-path hooks`, honouring
+    any core.hooksPath), which is shared by the repo's worktrees, so one install
+    covers agent worktrees too — no config wiring needed.
 
     Returns True if the hook is in place.
     """
-    hooks_dir = os.path.join(repo_path, ".devfleet-hooks")
+    try:
+        out = subprocess.run(
+            ["git", "-C", repo_path, "rev-parse", "--git-path", "hooks"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("could not locate hooks dir for %s: %s", repo_path, e)
+        return False
+    if out.returncode != 0:
+        return False  # not a git repo (yet) — nothing to hook
+    hooks_dir = out.stdout.strip()
+    if not os.path.isabs(hooks_dir):
+        hooks_dir = os.path.join(repo_path, hooks_dir)
     hook = os.path.join(hooks_dir, "commit-msg")
     try:
+        # Never clobber a hook we didn't write.
+        if os.path.exists(hook):
+            with open(hook) as f:
+                mine = "Installed by DevFleet" in f.read()
+            if not mine:
+                log.warning("existing commit-msg hook in %s left untouched", repo_path)
+                return False
         os.makedirs(hooks_dir, exist_ok=True)
         with open(hook, "w") as f:
             f.write(

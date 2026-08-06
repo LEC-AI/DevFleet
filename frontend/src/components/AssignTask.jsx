@@ -14,7 +14,12 @@ export default function AssignTask({ memberId, onDone }) {
   const [err, setErr] = useState('');
   const [okMsg, setOkMsg] = useState('');
 
-  useEffect(() => { listProjects().then(setProjects).catch(() => {}); }, []);
+  // Only this member's own projects: assigning work into someone else's
+  // confined workspace is exactly what per-member isolation forbids (and the
+  // API now rejects it too).
+  useEffect(() => {
+    listProjects().then(ps => setProjects(ps.filter(p => p.owner === memberId))).catch(() => {});
+  }, [memberId]);
 
   const assign = async (dispatchNow) => {
     if (!projectId || !title.trim()) { setErr('Pick a project and give the task a title'); return; }

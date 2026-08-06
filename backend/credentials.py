@@ -27,6 +27,7 @@ import logging
 import os
 import shutil
 import stat
+import tempfile
 
 import httpx
 
@@ -71,6 +72,15 @@ def store(member_id: str, github_token: str | None, claude_token: str | None) ->
             f.write(f"{k}={v}\n")
     os.replace(tmp, path)
     os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+
+
+def delete(member_id: str) -> None:
+    """Remove a member's secrets file. Deleting a member must not leave their
+    tokens on disk, where re-adding the same name would silently resurrect them."""
+    try:
+        os.remove(_secrets_path(member_id))
+    except FileNotFoundError:
+        pass
 
 
 def load(member_id: str) -> dict:
@@ -134,24 +144,25 @@ async def verify_claude(token: str) -> dict:
     if not os.path.exists(cli):
         return {"ok": False, "error": "claude CLI not found on PATH"}
 
-    sandbox_home = os.path.join(SECRETS_DIR, ".verify-home")
-    os.makedirs(sandbox_home, mode=0o700, exist_ok=True)
-    env = {
-        "HOME": sandbox_home,
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "CLAUDE_CODE_OAUTH_TOKEN": token,
-    }
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            cli, "--print", "--model", VERIFY_MODEL, "-p", VERIFY_PROMPT,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env=env, cwd=sandbox_home,
-        )
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=120)
-    except asyncio.TimeoutError:
-        return {"ok": False, "error": "Claude verification timed out after 120s"}
-    except Exception as e:
-        return {"ok": False, "error": f"could not run claude: {e}"}
+    # A fresh throwaway HOME per call: a shared one accumulates CLI state from
+    # earlier verifications, and a stale login there could vouch for a dead token.
+    with tempfile.TemporaryDirectory(prefix="devfleet-verify-") as sandbox_home:
+        env = {
+            "HOME": sandbox_home,
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "CLAUDE_CODE_OAUTH_TOKEN": token,
+        }
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                cli, "--print", "--model", VERIFY_MODEL, "-p", VERIFY_PROMPT,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                env=env, cwd=sandbox_home,
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "Claude verification timed out after 120s"}
+        except Exception as e:
+            return {"ok": False, "error": f"could not run claude: {e}"}
 
     text = out.decode("utf-8", "replace")
     if proc.returncode != 0 or "TOKEN_OK" not in text:

@@ -60,11 +60,18 @@ async def _find_eligible_missions(limit: int) -> list[dict]:
                         ) AS project_rank
                  FROM missions m
                  JOIN projects p ON p.id = m.project_id
+                 LEFT JOIN team_members t
+                   ON t.id = COALESCE(NULLIF(m.assignee, ''), NULLIF(p.owner, ''))
                  WHERE m.auto_dispatch = 1
                    AND m.status = 'draft'
                    -- on_hold / completed / archived projects don't drain.
                    -- COALESCE so a legacy row with no state still counts as active.
                    AND COALESCE(NULLIF(p.state, ''), 'active') = 'active'
+                   -- A member's missions WAIT while their tokens are unverified,
+                   -- rather than dispatching and failing the whole backlog overnight.
+                   AND (COALESCE(NULLIF(m.assignee, ''), NULLIF(p.owner, '')) IS NULL
+                        OR (t.github_verified_at IS NOT NULL
+                            AND t.claude_verified_at IS NOT NULL))
                    AND NOT EXISTS (
                      SELECT 1 FROM json_each(m.depends_on) dep
                      WHERE dep.value NOT IN (
