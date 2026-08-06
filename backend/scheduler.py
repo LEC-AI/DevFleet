@@ -122,8 +122,9 @@ async def _check_schedules():
                 """INSERT INTO missions
                    (id, project_id, title, detailed_prompt, acceptance_criteria,
                     priority, tags, model, max_turns, max_budget_usd,
-                    allowed_tools, mission_type, parent_mission_id, auto_dispatch, mission_number)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+                    allowed_tools, mission_type, parent_mission_id, auto_dispatch, mission_number,
+                    assignee)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
                 (new_id, template["project_id"],
                  f"{template['title']} ({now.strftime('%Y-%m-%d %H:%M')})",
                  template["detailed_prompt"],
@@ -136,7 +137,8 @@ async def _check_schedules():
                  template.get("allowed_tools", ""),
                  template.get("mission_type", "implement"),
                  template["id"],
-                 next_num),
+                 next_num,
+                 template.get("assignee")),   # clones stay on their member's tab
             )
 
             # Update last_scheduled_at on template

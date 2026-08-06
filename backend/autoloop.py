@@ -25,6 +25,8 @@ import uuid
 from datetime import datetime, timezone
 
 import db
+import night_window
+import usage_budget
 from prompt_template import build_prompt
 
 # Use SDK engine if available, fall back to CLI dispatcher
@@ -251,6 +253,25 @@ async def auto_loop(project_id: str, goal: str):
     max_iterations = 20  # Safety limit
 
     while iteration < max_iterations:
+        # Same gate as the mission watcher: never open a 5h quota window that
+        # would still be live when the human starts work. Sleep, don't exit —
+        # the loop picks up again when the night window reopens.
+        gate = night_window.state()
+        if not gate["dispatch_open"]:
+            log.info("Auto-loop waiting for night window: %s", gate["reason"])
+            await asyncio.sleep(60)
+            continue
+
+        # Spend cap. Matters more here than for the backlog watcher: the auto-loop
+        # invents its own work, so without this it would run until the weekly
+        # allowance is gone.
+        budget = await usage_budget.state(gate.get("session_window_start"),
+                                          weekend=gate.get("weekend", False))
+        if not budget["dispatch_open"]:
+            log.warning("Auto-loop holding — %s", budget["reason"])
+            await asyncio.sleep(60)
+            continue
+
         iteration += 1
         log.info("Auto-loop iteration %d for project %s", iteration, project["name"])
 

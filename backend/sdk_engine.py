@@ -52,7 +52,9 @@ _mp.parse_message = _patched_parse
 # Also patch in the client module where it's imported directly
 _cl.parse_message = _patched_parse
 
+import credentials
 import db
+import workspace
 from prompt_template import build_prompt
 from worktree import create_worktree, cleanup_worktree
 from models import TOOL_PRESETS, DispatchOptions
@@ -63,6 +65,16 @@ import random
 log = logging.getLogger("devfleet.sdk_engine")
 
 
+def _data_dir(*parts: str) -> str:
+    """Path inside the data directory, anchored on the DB location.
+
+    Not `<backend>/../data`: in Docker the backend is mounted at /app, so `..`
+    resolves to the filesystem root and every write lands on an unwritable
+    `/data`. DEVFLEET_DB is already the configured anchor, so use its directory.
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(db.DB_PATH)), *parts)
+
+
 def _stderr_log_path(session_id: str) -> str:
     """Per-session file the spawned Claude CLI writes its stderr/debug log into.
 
@@ -70,8 +82,7 @@ def _stderr_log_path(session_id: str) -> str:
     "Check stderr output for details" placeholder when the CLI exits non-zero.
     Tee'ing it to a file gives us real diagnostic info on failure.
     """
-    backend_dir = os.path.dirname(os.path.abspath(__file__))
-    log_dir = os.path.join(backend_dir, "..", "data", "logs")
+    log_dir = _data_dir("logs")
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, f"session-{session_id}.stderr.log")
 
@@ -318,7 +329,11 @@ running_tasks: dict[str, asyncio.Task] = {}
 _subscribers: dict[str, list[asyncio.Queue]] = {}
 _event_buffers: dict[str, list[dict]] = {}
 # Sessions being taken over — worktree is preserved on cancel
-_takeover_sessions: set[str] = {}
+_takeover_sessions: set[str] = set()   # `{}` is a dict: .add()/.discard() blew up
+# session_id → {cost, tokens} for sessions still streaming. The DB only gets
+# total_cost_usd at a terminal state, so usage_budget reads this for in-flight
+# spend. Cleared in the finally block alongside running_tasks.
+live_usage: dict[str, dict] = {}
 
 
 # ── MCP Server Integration (Phase 2) ──
@@ -352,9 +367,7 @@ async def _load_project_mcp_configs(project_id: str) -> dict:
 
 def _read_report_file(session_id: str) -> dict | None:
     """Read report JSON written by the stdio MCP submit_report tool."""
-    backend_dir = os.path.dirname(os.path.abspath(__file__))
-    report_dir = os.path.join(backend_dir, "..", "data", "reports")
-    report_path = os.path.join(report_dir, f"{session_id}.json")
+    report_path = _data_dir("reports", f"{session_id}.json")
     try:
         if os.path.exists(report_path):
             with open(report_path, "r") as f:
@@ -376,6 +389,7 @@ def _build_sdk_options(
     resume_session_id: str | None = None,
     extra_mcp_servers: dict | None = None,
     stderr_file=None,
+    member_env: dict | None = None,
 ) -> ClaudeCodeOptions:
     """Build ClaudeCodeOptions from mission config + dispatch overrides."""
 
@@ -436,7 +450,10 @@ def _build_sdk_options(
         "DEVFLEET_MISSION_ID": mission.get("id", ""),
         "DEVFLEET_PROJECT_ID": mission.get("project_id", ""),
         "DEVFLEET_SESSION_ID": session_id,
-        "DEVFLEET_REPORT_DIR": os.path.join(backend_dir, "..", "data", "reports"),
+        "DEVFLEET_REPORT_DIR": _data_dir("reports"),
+        # Sub-missions inherit the member, or they'd vanish from that member's
+        # tab and dispatch without their identity.
+        "DEVFLEET_ASSIGNEE": mission.get("assignee") or "",
     }
 
     mcp_servers = {
@@ -489,6 +506,10 @@ def _build_sdk_options(
         resume=resume_session_id,
         include_partial_messages=False,
     )
+    if member_env:
+        # Merged over os.environ by the SDK's transport: the agent authenticates
+        # as the mission's member, not as the backend's inherited identity.
+        kwargs["env"] = member_env
     if mcp_servers:
         kwargs["mcp_servers"] = mcp_servers
     if stderr_file is not None:
@@ -633,6 +654,14 @@ async def _run_agent(
         stderr_file = None
 
     try:
+        # Whose identity this agent runs under. Raises (→ failure path below)
+        # if the member isn't verified-ready or the assignee/owner mismatch.
+        member_ctx = await _member_context(mission)
+        if member_ctx["owner"]:
+            # Owned workspace: agent commits get the fleet prefix, via a hook —
+            # the agent runs git itself, so a prompt instruction is not enforcement.
+            workspace.enforce_commit_prefix(work_dir)
+
         # Load per-project MCP configs from DB
         extra_mcp = await _load_project_mcp_configs(mission.get("project_id", ""))
 
@@ -668,6 +697,7 @@ async def _run_agent(
             resume_session_id=resume_session_id,
             extra_mcp_servers=extra_mcp or None,
             stderr_file=stderr_file,
+            member_env=member_ctx["env"],
         )
         model_used = sdk_options.model or "claude-opus-4-6"
 
@@ -707,6 +737,7 @@ async def _run_agent(
                     resume_session_id=current_resume_id,
                     extra_mcp_servers=extra_mcp or None,
                     stderr_file=stderr_file,
+                    member_env=member_ctx["env"],
                 )
             try:
                 async for message in _safe_query(prompt=attempt_prompt, options=sdk_options):
@@ -763,6 +794,11 @@ async def _run_agent(
                             total_tokens = existing_tokens + input_t + output_t
                         if cost:
                             total_cost = existing_cost + cost
+                        # Publish live spend: total_cost_usd is only written to the
+                        # DB at a terminal state, so usage_budget would otherwise be
+                        # blind to everything currently in flight and could overshoot
+                        # a cap by a whole mission per agent.
+                        live_usage[session_id] = {"cost": total_cost, "tokens": total_tokens}
                         if cost or usage:
                             _broadcast(session_id, {
                                 "type": "usage",
@@ -1135,12 +1171,58 @@ async def _run_agent(
 
     finally:
         running_tasks.pop(session_id, None)
+        live_usage.pop(session_id, None)   # settled spend is in the DB now
         _event_buffers.pop(session_id, None)
         if stderr_file is not None:
             try:
                 stderr_file.close()
             except Exception:
                 pass
+
+
+async def _member_context(mission: dict) -> dict:
+    """Whose behalf this mission runs on: {member_id, owner, env}.
+
+    A mission runs as its assignee — or, unassigned, as the owner of its
+    project. That member must have verified tokens on file; the agent gets them
+    via env overrides so it pushes to GitHub and bills Claude as that member,
+    not as whatever identity the backend process happened to inherit. A raise
+    here lands in _run_agent's failure path, so the session is marked failed
+    with the reason instead of silently running under the wrong identity.
+    """
+    conn = await db.get_db()
+    try:
+        rows = await conn.execute_fetchall(
+            "SELECT owner FROM projects WHERE id=?", (mission.get("project_id", ""),))
+        owner = (dict(rows[0]).get("owner") or "") if rows else ""
+        member_id = mission.get("assignee") or owner
+        if not member_id:
+            return {"member_id": "", "owner": "", "env": {}}
+        if owner and mission.get("assignee") and mission["assignee"] != owner:
+            raise RuntimeError(
+                f"mission assignee '{mission['assignee']}' does not own this project "
+                f"('{owner}') — refusing to run in another member's workspace")
+        trows = await conn.execute_fetchall(
+            "SELECT github_verified_at, claude_verified_at FROM team_members WHERE id=?",
+            (member_id,))
+    finally:
+        await conn.close()
+
+    member = dict(trows[0]) if trows else {}
+    creds = credentials.load(member_id)
+    if not (member.get("github_verified_at") and member.get("claude_verified_at")
+            and creds.get("GITHUB_TOKEN") and creds.get("CLAUDE_CODE_OAUTH_TOKEN")):
+        raise RuntimeError(
+            f"'{member_id}' is not ready — their GitHub and Claude tokens must be "
+            f"verified on their tab before their missions can run")
+    return {
+        "member_id": member_id,
+        "owner": owner,
+        "env": {
+            "GITHUB_TOKEN": creds["GITHUB_TOKEN"],
+            "CLAUDE_CODE_OAUTH_TOKEN": creds["CLAUDE_CODE_OAUTH_TOKEN"],
+        },
+    }
 
 
 async def dispatch_mission(

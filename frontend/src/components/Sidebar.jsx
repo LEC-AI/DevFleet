@@ -1,22 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { getDashboardStats } from '../api/client';
+import { getDashboardStats, listTeam } from '../api/client';
 
 const NAV = [
-  { id: 'dashboard', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1' },
+  { id: 'dashboard', label: 'Master Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1' },
   { id: 'projects', label: 'Projects', icon: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z' },
-  { id: 'missions', label: 'Missions', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
   { id: 'reports', label: 'Reports', icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-  { id: 'integrations', label: 'Integrations', icon: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5' },
 ];
 
-export default function Sidebar({ activePage, navigate }) {
+/** Initials for the tab avatar: "Mohammed Kaif Kohari" → "MK". */
+function initials(name) {
+  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+
+export default function Sidebar({ activePage, activeId, navigate }) {
   const [runningAgents, setRunningAgents] = useState(0);
+  const [team, setTeam] = useState([]);
 
   useEffect(() => {
     const poll = async () => {
       try {
         const stats = await getDashboardStats();
         setRunningAgents(stats.running_agents || 0);
+      } catch {}
+      try {
+        setTeam(await listTeam());
       } catch {}
     };
     poll();
@@ -47,6 +56,24 @@ export default function Sidebar({ activePage, navigate }) {
               </svg>
             </span>
             <span className="nav-label">{item.label}</span>
+          </button>
+        ))}
+
+        {team.length > 0 && <div className="nav-section-label">Team</div>}
+        {team.map(m => (
+          <button
+            key={m.id}
+            className={`nav-item nav-item--member ${activePage === 'member' && activeId === m.id ? 'active' : ''}`}
+            onClick={() => navigate('member', m.id)}
+            title={`${m.display_name || m.name} — ${m.running} running, ${m.queued} queued`}
+          >
+            <span className="nav-avatar" style={m.accent ? { background: m.accent } : undefined}>
+              {initials(m.display_name || m.name)}
+            </span>
+            <span className="nav-label">{m.display_name || m.name}</span>
+            {m.running > 0
+              ? <span className="nav-badge nav-badge--running">{m.running}</span>
+              : m.queued > 0 ? <span className="nav-badge">{m.queued}</span> : null}
           </button>
         ))}
       </nav>

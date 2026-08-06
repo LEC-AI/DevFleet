@@ -111,15 +111,14 @@ npm install && npm run dev
 ```bash
 git clone https://github.com/LEC-AI/claude-devfleet.git
 cd devfleet
+cp .env.example .env      # then edit it
 ```
 
-Add your project repos to `docker-compose.yml`:
+`.env` covers the three things a local server needs — a headless token, where
+your repos live, and the night window:
 
-```yaml
-volumes:
-  - /path/to/your/project:/workspace/your-project
-environment:
-  - DEVFLEET_PATH_MAP_1=/path/to/your/project:/workspace/your-project
+```bash
+claude setup-token        # on the host; paste into CLAUDE_CODE_OAUTH_TOKEN
 ```
 
 ```bash
@@ -127,6 +126,67 @@ docker compose up -d
 
 # UI: http://localhost:3101
 # API: http://localhost:18801/docs
+```
+
+To mount repos from more than one folder, add volumes and a matching
+`DEVFLEET_PATH_MAP_N` so host paths typed in the UI resolve inside the container:
+
+```yaml
+volumes:
+  - /path/to/your/project:/workspace/your-project
+environment:
+  - DEVFLEET_PATH_MAP_2=/path/to/your/project:/workspace/your-project
+```
+
+## Overnight Backlog
+
+Autonomous dispatch runs only at night, so the day's quota stays yours. You keep
+a prioritised backlog of tasks across projects; the fleet drains it while you
+sleep and hands back reports in the morning.
+
+```bash
+devfleet add lec-scraper "fix the odds parser dropping same-game parlays" -p 5
+devfleet add lec-scraper "add retry on the 9am cron timeout" -p 3
+devfleet add lec-web "tidy the status page legend" -p 1 -t implement
+
+devfleet backlog          # queue, in the order it will drain
+devfleet night            # window state, current session window, agents running
+```
+
+Tasks sit as `draft` missions with `auto_dispatch=1`. The mission watcher drains
+them round-robin across projects — every project's top task before any project's
+second — so one long backlog cannot starve the others. Priority (0-5) orders
+tasks within a project. Anything not finished stays queued for the next night.
+
+### Why a window, and why it closes at 07:00
+
+Subscription limits are rolling 5-hour session windows. Stopping at sunrise is
+not enough: an agent that opens the window at 07:00 keeps it open until 12:00,
+so whatever it drains is drained from your morning.
+
+So the gate never *opens* a window that would still be live at `DAY_START`:
+
+| Time (default) | State | What happens |
+|---|---|---|
+| 21:00 | dispatch opens | window 0 (21:00-02:00), backlog drains |
+| 02:00 | window 1 opens | 02:00-07:00, still clear of the morning |
+| 07:00 | dispatch closes | window 2 would run to 12:00, so no new agents |
+| 07:00-08:30 | draining | running agents finish, nothing new starts |
+| 08:30 | hard stop | agents paused, worktree kept, `status=paused` |
+| next 21:00 | resume | paused sessions continue the same conversation |
+
+The 07:00 cutoff is not configured — it falls out of the arithmetic. Move
+`DEVFLEET_NIGHT_START` or `DEVFLEET_DAY_START` and it moves with them.
+
+**Manual dispatch from the UI or API is never gated** — the window only governs
+autonomous dispatch (mission watcher and auto-loop).
+
+Weekly limits are shared, so overnight work still spends from the same weekly
+allowance. What the window buys you is that no *session* window is ever
+half-drained when you sit down to work.
+
+```bash
+cd backend && python3 test_night_window.py   # verifies the window maths + queue order
 ```
 
 ## Features

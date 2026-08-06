@@ -418,6 +418,83 @@ body {
 .status-badge--completed { background: var(--success-soft); color: var(--status-completed); }
 .status-badge--failed { background: var(--danger-soft); color: var(--status-failed); }
 .status-badge--cancelled { background: rgba(161, 161, 170, 0.1); color: var(--status-cancelled); }
+/* Paused by the night window — worktree kept, resumes next night */
+.status-badge--paused { background: var(--info-soft); color: var(--status-queued); }
+.status-badge--takeover { background: var(--warning-soft); color: var(--status-running); }
+
+/* ── Per-member sidebar tabs ── */
+.nav-section-label {
+  padding: 16px 16px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.45;
+}
+.nav-item--member { gap: 10px; }
+.nav-avatar {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: rgba(113, 113, 122, 0.55);
+}
+.nav-badge {
+  margin-left: auto;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  background: rgba(113, 113, 122, 0.2);
+}
+.nav-badge--running {
+  background: var(--warning-soft);
+  color: var(--status-running);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* ── Report links (PRs, commits) ── */
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  text-decoration: none;
+  background: rgba(113, 113, 122, 0.15);
+  color: inherit;
+}
+.chip:hover { background: rgba(113, 113, 122, 0.3); }
+.chip--pr { background: var(--success-soft); color: var(--status-completed); font-weight: 600; }
+
+.list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(113, 113, 122, 0.15);
+}
+.list-row:last-child { border-bottom: none; }
+.list-row--stack { align-items: flex-start; }
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.text-dim { opacity: 0.6; font-size: 12px; }
 
 /* ── Buttons ── */
 .btn {

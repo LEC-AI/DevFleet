@@ -2,13 +2,11 @@ import React, { useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Projects from './pages/Projects';
-import MissionBoard from './pages/MissionBoard';
 import MissionDetail from './pages/MissionDetail';
 import LiveAgent from './pages/LiveAgent';
 import Reports from './pages/Reports';
 import StatusPage from './pages/StatusPage';
 import ProjectDetail from './pages/ProjectDetail';
-import Integrations from './pages/Integrations';
 
 function App() {
   const [page, setPage] = useState('dashboard');
@@ -27,16 +25,14 @@ function App() {
         return <Projects navigate={navigate} />;
       case 'project':
         return <ProjectDetail id={selectedId} navigate={navigate} />;
-      case 'missions':
-        return <MissionBoard navigate={navigate} />;
+      case 'member':
+        return <Dashboard key={selectedId} memberId={selectedId} navigate={navigate} />;
       case 'mission':
         return <MissionDetail id={selectedId} navigate={navigate} />;
       case 'live':
         return <LiveAgent sessionId={selectedId} navigate={navigate} />;
       case 'reports':
         return <Reports navigate={navigate} />;
-      case 'integrations':
-        return <Integrations navigate={navigate} />;
       case 'status':
         return <StatusPage navigate={navigate} />;
       default:
@@ -46,7 +42,7 @@ function App() {
 
   return (
     <div className="app-layout">
-      <Sidebar activePage={page} navigate={navigate} />
+      <Sidebar activePage={page} activeId={selectedId} navigate={navigate} />
       <main className="main-content">
         {renderPage()}
       </main>

@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from typing import Optional
 
 import db
 from models import (ProjectCreate, ProjectUpdate, MissionCreate, MissionUpdate,
@@ -18,6 +19,10 @@ from models import (ProjectCreate, ProjectUpdate, MissionCreate, MissionUpdate,
                     McpServerCreate)
 import health_checker
 import mission_watcher
+import credentials
+import night_window
+import usage_budget
+import workspace
 import scheduler
 from autoloop import start_auto_loop, stop_auto_loop, get_auto_loop_status
 from remote_control import (start_remote_control, stop_remote_control,
@@ -240,6 +245,27 @@ async def list_projects():
 
 @app.post("/api/projects", status_code=201)
 async def create_project(body: ProjectCreate):
+    # A project owned by a member lives inside that member's confined workspace,
+    # so the UI never asks anyone to type a path — it is derived from the name.
+    # An explicit path is still accepted for projects with no owner (the legacy
+    # "point at a repo already on disk" flow).
+    if body.owner:
+        conn = await db.get_db()
+        try:
+            member = await _member(conn, body.owner)
+        finally:
+            await conn.close()
+        if not _readiness(member)["ready"]:
+            raise HTTPException(
+                400,
+                f"{member['name']}'s environment is not ready — verify their "
+                f"GitHub and Claude tokens before creating projects for them",
+            )
+        body.path = workspace.project_path(body.owner, body.name, create=True)
+
+    if not body.path:
+        raise HTTPException(400, "Either an owner (workspace-scoped) or a path is required")
+
     # Store the original host path, but validate the resolved (container) path
     resolved = resolve_path(body.path)
     if not os.path.isdir(resolved):
@@ -292,6 +318,15 @@ async def update_project(pid: str, body: ProjectUpdate):
         updates = body.model_dump(exclude_none=True)
         if not updates:
             return dict(rows[0])
+        current = dict(rows[0])
+        # Confinement holds for the project's lifetime, not just at creation:
+        # a member project's path is derived from owner + name, and re-pointing
+        # it (or handing an arbitrary-path project to a member) would send that
+        # member's agents anywhere on disk.
+        if "owner" in updates and (updates["owner"] or "") != (current.get("owner") or ""):
+            raise HTTPException(400, "owner is fixed at creation — create a new project for that member")
+        if "path" in updates and current.get("owner"):
+            raise HTTPException(400, "A member project's path is derived from its owner and name — it cannot be re-pointed")
         if "path" in updates and not os.path.isdir(resolve_path(updates["path"])):
             raise HTTPException(400, f"Path does not exist: {updates['path']}")
         sets = ", ".join(f"{k}=?" for k in updates)
@@ -360,13 +395,30 @@ async def list_missions(
         await conn.close()
 
 
+async def _check_assignee(conn, assignee: str, project_owner: str):
+    """A member's missions live in that member's own project — full stop.
+
+    Without this, one member's tab can create and dispatch work inside another
+    member's confined workspace, invisible to its owner (their dashboard filters
+    on assignee, not on whose workspace was written to)."""
+    rows = await conn.execute_fetchall("SELECT id FROM team_members WHERE id=?", (assignee,))
+    if not rows:
+        raise HTTPException(400, f"Unknown assignee '{assignee}'")
+    if project_owner != assignee:
+        detail = f"it belongs to '{project_owner}'" if project_owner else "it has no owner"
+        raise HTTPException(
+            400, f"Missions for '{assignee}' must live in their own project — {detail}")
+
+
 @app.post("/api/missions", status_code=201)
 async def create_mission(body: MissionCreate):
     conn = await db.get_db()
     try:
-        rows = await conn.execute_fetchall("SELECT id FROM projects WHERE id=?", (body.project_id,))
+        rows = await conn.execute_fetchall("SELECT id, owner FROM projects WHERE id=?", (body.project_id,))
         if not rows:
             raise HTTPException(400, "Project not found")
+        if body.assignee:
+            await _check_assignee(conn, body.assignee, dict(rows[0]).get("owner") or "")
         mid = str(uuid.uuid4())
         schedule_enabled = 1 if body.schedule_cron else 0
         # Get next mission number for this project
@@ -378,14 +430,16 @@ async def create_mission(body: MissionCreate):
         await conn.execute(
             """INSERT INTO missions (id, project_id, title, detailed_prompt, acceptance_criteria,
                priority, tags, model, max_turns, max_budget_usd, allowed_tools, mission_type,
-               parent_mission_id, depends_on, auto_dispatch, schedule_cron, schedule_enabled, mission_number)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               parent_mission_id, depends_on, auto_dispatch, schedule_cron, schedule_enabled, mission_number,
+               assignee)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (mid, body.project_id, body.title, body.detailed_prompt,
              body.acceptance_criteria, body.priority, json.dumps(body.tags),
              body.model, body.max_turns, body.max_budget_usd,
              body.allowed_tools or "", body.mission_type,
              body.parent_mission_id, json.dumps(body.depends_on),
-             1 if body.auto_dispatch else 0, body.schedule_cron, schedule_enabled, next_num),
+             1 if body.auto_dispatch else 0, body.schedule_cron, schedule_enabled, next_num,
+             body.assignee),
         )
         await conn.commit()
         row = await conn.execute_fetchall(
@@ -526,6 +580,11 @@ async def update_mission(mid: str, body: MissionUpdate):
         updates = body.model_dump(exclude_none=True)
         if not updates:
             return dict(rows[0])
+        if updates.get("assignee"):
+            proj = await conn.execute_fetchall(
+                "SELECT owner FROM projects WHERE id=?", (dict(rows[0])["project_id"],))
+            await _check_assignee(conn, updates["assignee"],
+                                  (dict(proj[0]).get("owner") or "") if proj else "")
         if "tags" in updates:
             updates["tags"] = json.dumps(updates["tags"])
         if "depends_on" in updates:
@@ -1003,6 +1062,262 @@ async def get_report(rid: str):
 
 
 # ──────────────────────────────────────────────
+# Team — one tab / dashboard per person
+#
+# NOTE: this is attribution and filtering, NOT authentication. The API has no
+# auth, so anyone who can reach it can act as anyone. Credential storage and
+# real per-user identity wait on that being fixed.
+# ──────────────────────────────────────────────
+
+@app.get("/api/team")
+async def list_team():
+    """Team members, in tab order, each with a live count of their work."""
+    conn = await db.get_db()
+    try:
+        rows = await conn.execute_fetchall(
+            """SELECT t.*,
+                      (SELECT COUNT(*) FROM missions m
+                        WHERE m.assignee = t.id AND m.status = 'running') AS running,
+                      (SELECT COUNT(*) FROM missions m
+                        WHERE m.assignee = t.id AND m.status = 'draft'
+                          AND m.auto_dispatch = 1) AS queued,
+                      (SELECT COUNT(*) FROM missions m
+                        WHERE m.assignee = t.id AND m.status = 'completed') AS completed
+               FROM team_members t
+               ORDER BY t.sort_order ASC, t.name ASC"""
+        )
+        return [dict(r) for r in rows]
+    finally:
+        await conn.close()
+
+
+class TeamMemberCreate(BaseModel):
+    name: str
+    display_name: str = ""
+    accent: str = ""
+    sort_order: int = 100
+
+
+@app.post("/api/team", status_code=201)
+async def create_team_member(body: TeamMemberCreate):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Name is required")
+    # slug() so the id IS its own slug: secrets files and workspace dirs are
+    # keyed on slug(id), and two ids that slug identically ('kai@f', 'kai-f')
+    # would otherwise share a workspace and a token file.
+    mid = workspace.slug(name)
+    conn = await db.get_db()
+    try:
+        try:
+            await conn.execute(
+                """INSERT INTO team_members (id, name, display_name, accent, sort_order)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (mid, name, body.display_name or name, body.accent, body.sort_order),
+            )
+        except Exception:
+            raise HTTPException(400, f"'{name}' is already on the team")
+        await conn.commit()
+        rows = await conn.execute_fetchall("SELECT * FROM team_members WHERE id=?", (mid,))
+        return dict(rows[0])
+    finally:
+        await conn.close()
+
+
+@app.delete("/api/team/{member_id}", status_code=204)
+async def delete_team_member(member_id: str):
+    """Remove a member. Their missions survive, just unassigned."""
+    conn = await db.get_db()
+    try:
+        await conn.execute("UPDATE missions SET assignee=NULL WHERE assignee=?", (member_id,))
+        await conn.execute("DELETE FROM team_members WHERE id=?", (member_id,))
+        await conn.commit()
+    finally:
+        await conn.close()
+    # Their tokens go too — leftovers would resurrect under a re-added name.
+    credentials.delete(member_id)
+
+
+class MemberCredentials(BaseModel):
+    github_token: Optional[str] = None    # PAT or fine-grained token, never a password
+    claude_token: Optional[str] = None    # from `claude setup-token`
+    linux_user: Optional[str] = None
+
+
+async def _member(conn, member_id: str) -> dict:
+    rows = await conn.execute_fetchall("SELECT * FROM team_members WHERE id=?", (member_id,))
+    if not rows:
+        raise HTTPException(404, "Team member not found")
+    return dict(rows[0])
+
+
+def _readiness(member: dict) -> dict:
+    """Is this member's environment ready to run agents?
+
+    Readiness, not authorisation: it gates half-configured environments, not
+    unauthorised callers. The API has no auth.
+    """
+    present = credentials.has(member["id"])
+    ws = workspace.member_workspace(member["id"])
+    github_ok = bool(member.get("github_verified_at")) and present["github"]
+    claude_ok = bool(member.get("claude_verified_at")) and present["claude"]
+    missing = []
+    if not present["github"]:
+        missing.append("GitHub token not provided")
+    elif not github_ok:
+        missing.append("GitHub token not verified")
+    if not present["claude"]:
+        missing.append("Claude token not provided")
+    elif not claude_ok:
+        missing.append("Claude token not verified")
+    return {
+        "ready": github_ok and claude_ok,
+        "name": member.get("display_name") or member.get("name") or member["id"],
+        "github": {"stored": present["github"], "verified": github_ok,
+                   "login": member.get("github_login") or "",
+                   "verified_at": member.get("github_verified_at")},
+        "claude": {"stored": present["claude"], "verified": claude_ok,
+                   "verified_at": member.get("claude_verified_at")},
+        "workspace": {"path": ws, "exists": os.path.isdir(ws)},
+        "linux_user": member.get("linux_user") or "",
+        "missing": missing,
+    }
+
+
+@app.get("/api/team/{member_id}/readiness")
+async def member_readiness(member_id: str):
+    conn = await db.get_db()
+    try:
+        return _readiness(await _member(conn, member_id))
+    finally:
+        await conn.close()
+
+
+@app.post("/api/team/{member_id}/credentials")
+async def set_member_credentials(member_id: str, body: MemberCredentials):
+    """Store tokens (to a 0600 file, not the DB) and immediately verify them."""
+    conn = await db.get_db()
+    try:
+        member = await _member(conn, member_id)
+        try:
+            credentials.store(member_id, body.github_token, body.claude_token)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if body.linux_user is not None:
+            await conn.execute("UPDATE team_members SET linux_user=? WHERE id=?",
+                               (body.linux_user.strip(), member_id))
+            await conn.commit()
+    finally:
+        await conn.close()
+    return await verify_member(member_id)
+
+
+@app.post("/api/team/{member_id}/verify")
+async def verify_member(member_id: str):
+    """Actually call GitHub and Claude with the stored tokens.
+
+    A real Claude call costs a few cents, so this runs on demand only — never on
+    a poll. Verification results are recorded so the tab can unlock without
+    re-billing on every page load.
+    """
+    conn = await db.get_db()
+    try:
+        member = await _member(conn, member_id)
+    finally:
+        await conn.close()
+
+    creds = credentials.load(member_id)
+    gh, cl = await asyncio.gather(
+        credentials.verify_github(creds.get("GITHUB_TOKEN", "")),
+        credentials.verify_claude(creds.get("CLAUDE_CODE_OAUTH_TOKEN", "")),
+    )
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn = await db.get_db()
+    try:
+        await conn.execute(
+            """UPDATE team_members
+               SET github_verified_at=?, github_login=?, claude_verified_at=?
+               WHERE id=?""",
+            (now if gh.get("ok") else None, gh.get("login") or "",
+             now if cl.get("ok") else None, member_id),
+        )
+        await conn.commit()
+        member = await _member(conn, member_id)
+    finally:
+        await conn.close()
+
+    # The workspace only gets created once the environment checks out, so a
+    # half-set-up member leaves nothing behind on disk.
+    if gh.get("ok") and cl.get("ok"):
+        workspace.member_workspace(member_id, create=True)
+
+    result = _readiness(member)
+    result["checks"] = {"github": gh, "claude": cl}
+    return result
+
+
+@app.get("/api/team/{member_id}/dashboard")
+async def team_member_dashboard(member_id: str, limit: int = Query(25)):
+    """Everything one person's tab needs, in a single call: their agents right
+    now, their backlog in drain order, and their latest reports."""
+    conn = await db.get_db()
+    try:
+        rows = await conn.execute_fetchall("SELECT * FROM team_members WHERE id=?", (member_id,))
+        if not rows:
+            raise HTTPException(404, "Team member not found")
+        member = dict(rows[0])
+
+        missions = await conn.execute_fetchall(
+            """SELECT m.*, p.name AS project_name
+               FROM missions m JOIN projects p ON p.id = m.project_id
+               WHERE m.assignee = ?
+               ORDER BY CASE m.status WHEN 'running' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+                        m.priority DESC, m.updated_at DESC
+               LIMIT ?""",
+            (member_id, limit),
+        )
+        missions = [dict(m) for m in missions]
+
+        agents = await conn.execute_fetchall(
+            """SELECT s.id AS session_id, s.status, s.started_at, s.model,
+                      s.total_cost_usd, s.total_tokens, m.title, m.id AS mission_id
+               FROM agent_sessions s JOIN missions m ON m.id = s.mission_id
+               WHERE m.assignee = ? AND s.status IN ('running', 'paused', 'takeover')
+               ORDER BY s.started_at DESC""",
+            (member_id,),
+        )
+
+        reports = await conn.execute_fetchall(
+            """SELECT r.*, m.title, m.id AS mission_id, p.name AS project_name
+               FROM reports r
+               JOIN missions m ON m.id = r.mission_id
+               JOIN projects p ON p.id = m.project_id
+               WHERE m.assignee = ?
+               ORDER BY r.created_at DESC LIMIT ?""",
+            (member_id, limit),
+        )
+
+        spend = await conn.execute_fetchall(
+            """SELECT COALESCE(SUM(s.total_cost_usd), 0) AS cost,
+                      COALESCE(SUM(s.total_tokens), 0) AS tokens
+               FROM agent_sessions s JOIN missions m ON m.id = s.mission_id
+               WHERE m.assignee = ? AND s.started_at >= datetime('now', '-7 days')""",
+            (member_id,),
+        )
+
+        return {
+            "member": member,
+            "missions": missions,
+            "agents": [dict(a) for a in agents],
+            "reports": [dict(r) for r in reports],
+            "spend_7d": dict(spend[0]) if spend else {"cost": 0, "tokens": 0},
+        }
+    finally:
+        await conn.close()
+
+
+# ──────────────────────────────────────────────
 # Dashboard
 # ──────────────────────────────────────────────
 
@@ -1029,7 +1344,9 @@ async def dashboard_stats():
                FROM agent_sessions s
                JOIN missions m ON m.id = s.mission_id
                JOIN projects p ON p.id = m.project_id
-               ORDER BY s.started_at DESC LIMIT 10"""
+               ORDER BY CASE WHEN s.status IN ('running','paused','takeover')
+                             THEN 0 ELSE 1 END,
+                        s.started_at DESC LIMIT 10"""
         )
         return {
             "total_projects": dict(projects[0])["c"],
@@ -2078,14 +2395,18 @@ async def list_mission_events(mid: str, limit: int = Query(20)):
 
 @app.get("/api/system/status")
 async def system_status():
-    """Get system-wide status: watcher, scheduler, running agents."""
+    """Get system-wide status: watcher, scheduler, running agents, night window."""
     running_count = sum(1 for t in running_tasks.values() if not t.done())
+    gate = night_window.state()
     return {
         "running_agents": running_count,
         "max_agents": MAX_CONCURRENT_AGENTS,
         "engine": "sdk" if USE_SDK_ENGINE else "cli",
         "mission_watcher": mission_watcher.get_watcher_status(),
         "scheduler": scheduler.get_scheduler_status(),
+        "night_window": gate,
+        "usage_budget": await usage_budget.state(gate.get("session_window_start"),
+                                                 weekend=gate.get("weekend", False)),
     }
 
 

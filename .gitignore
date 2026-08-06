@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 .env
 .env.*
+!.env.example
 *.db
 *.db-wal
 *.db-shm
@@ -16,6 +17,9 @@ venv/
 .DS_Store
 
 .devfleet-worktrees/
+
+# Member workspaces (checkouts + .secrets token files) — never in git
+workspaces/
 
 # User-created projects (via planner)
 projects/

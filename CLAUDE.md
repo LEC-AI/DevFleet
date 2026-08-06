@@ -23,9 +23,25 @@ Controlled by `DEVFLEET_ENGINE` env var:
 
 ### Background Services
 Started in `app.py` lifespan:
-- **Mission Watcher** (`mission_watcher.py`) — Polls every 5s for `auto_dispatch=1` missions whose dependencies are met, dispatches to available agent slots
+- **Mission Watcher** (`mission_watcher.py`) — Polls every 5s for `auto_dispatch=1` missions whose dependencies are met, dispatches to available agent slots. Gated by the night window; drains round-robin across projects
 - **Scheduler** (`scheduler.py`) — Checks cron schedules every 60s, clones template missions with `auto_dispatch=1`
 - **Health Checker** (`health_checker.py`) — Polls monitored services for uptime
+
+### Night Window (`night_window.py`)
+Autonomous dispatch only runs overnight so the day's quota stays with the human.
+Subscription limits are rolling 5-hour session windows, so the gate never *opens*
+a window that would still be live at `DEVFLEET_DAY_START` — with the defaults
+(21:00 night start, 09:00 day start) dispatch stops at 07:00 on its own, agents
+drain until 08:30, then a hard stop pauses them.
+
+- `night_window.state()` returns `dispatch_open` / `hard_stop` plus the current session window. Both the watcher and `autoloop.py` consult it.
+- **Manual dispatch (`POST /api/missions/{id}/dispatch`) is deliberately NOT gated.** Only autonomous dispatch is.
+- Hard stop uses `takeover_session()` so the worktree survives, sets the session to `paused`, and puts the mission back to `draft` with `resume_session_id` set. The next night the watcher calls `resume_mission()` instead of starting over.
+- The scheduler is intentionally ungated — cron templates queue missions any time; the watcher decides when they run.
+- Env: `DEVFLEET_NIGHT_ENABLED`, `DEVFLEET_TZ`, `DEVFLEET_NIGHT_START`, `DEVFLEET_NIGHT_END`, `DEVFLEET_DAY_START`, `DEVFLEET_SESSION_HOURS`. Set `DEVFLEET_NIGHT_ENABLED=false` for 24/7 dispatch.
+- `zoneinfo` needs the `tzdata` package on python:slim — it is in requirements.txt.
+
+Self-check: `cd backend && python3 test_night_window.py` (window maths + queue order, no agents spawned).
 
 ## Build & Run Commands
 
@@ -50,7 +66,8 @@ There are no tests or linting configured in this project.
 ## Key Files
 - `backend/app.py` — FastAPI routes: projects, missions, dispatch, resume, remote-control, sessions, reports, dashboard, auto-loop, scheduling, system status, MCP configs, services, health checks, incidents
 - `backend/sdk_engine.py` — SDK dispatch engine: claude-code-sdk streaming, stdio MCP server attachment, report file pickup, per-project MCP config loading, cost tracking
-- `backend/mission_watcher.py` — Auto-dispatch engine: polls for eligible missions, checks `depends_on` via `json_each`, dispatches to available slots, emits mission_events
+- `backend/mission_watcher.py` — Auto-dispatch engine: polls for eligible missions, checks `depends_on` via `json_each`, dispatches to available slots, emits mission_events. Night-gated; round-robin across projects; pauses/resumes across nights
+- `backend/night_window.py` — Night window gate: 5-hour-session-aware dispatch window so overnight work never eats the human's daytime quota
 - `backend/scheduler.py` — Cron scheduler: built-in cron parser, clones template missions on schedule, sets auto_dispatch
 - `backend/mcp_context.py` — Stdio MCP server: contextual intelligence (mission, project, session, team context)
 - `backend/mcp_devfleet.py` — Stdio MCP server: agent self-service (submit_report, create_sub_mission with auto_dispatch, request_review, get_sub_mission_status, list_project_missions)
@@ -97,7 +114,7 @@ Tool naming in allowed_tools: `mcp__devfleet-context__get_mission_context`, `mcp
 
 ## DB Schema (SQLite)
 - `projects` — id, name, path, description
-- `missions` — id, project_id, title, detailed_prompt, acceptance_criteria, status, priority, tags, model, max_turns, max_budget_usd, allowed_tools, mission_type, parent_mission_id, depends_on, auto_dispatch, schedule_cron, schedule_enabled, last_scheduled_at
+- `missions` — id, project_id, title, detailed_prompt, acceptance_criteria, status, priority, tags, model, max_turns, max_budget_usd, allowed_tools, mission_type, parent_mission_id, depends_on, auto_dispatch, schedule_cron, schedule_enabled, last_scheduled_at, resume_session_id (set when the night window paused it)
 - `agent_sessions` — id, mission_id, status, claude_session_id, output_log, error_log, exit_code, model, remote_url, total_cost_usd, total_tokens
 - `reports` — id, session_id, mission_id, files_changed, what_done, what_open, what_tested, what_untested, next_steps, errors_encountered, preview_url
 - `mission_events` — id, mission_id, event_type, source_mission_id, data, created_at

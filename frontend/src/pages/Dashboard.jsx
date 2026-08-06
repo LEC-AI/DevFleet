@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { getDashboardStats, getSystemStatus, planProject, getPlugins } from '../api/client';
+import { getDashboardStats, getSystemStatus, planProject,
+         getMemberDashboard, getMemberReadiness } from '../api/client';
 import StatsCard from '../components/StatsCard';
 import StatusBadge from '../components/StatusBadge';
+import EnvironmentSetup from '../components/EnvironmentSetup';
+import AssignTask from '../components/AssignTask';
+import SessionConsole from '../components/SessionConsole';
 
 function timeAgo(dateStr) {
   if (!dateStr) return '';
@@ -46,7 +50,27 @@ const ICONS = {
   eye:      'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
 };
 
-export default function Dashboard({ navigate }) {
+/** Fold one member's data into the same shape the fleet-wide stats use, so the
+ *  whole dashboard below renders scoped to them without a second layout to
+ *  maintain. A copy of this page would drift from the master within a week. */
+function asStats(d) {
+  const by = {};
+  for (const m of d.missions) by[m.status] = (by[m.status] || 0) + 1;
+  return {
+    total_projects: new Set(d.missions.map(m => m.project_name)).size,
+    missions_by_status: by,
+    running_agents: d.agents.filter(a => a.status === 'running').length,
+    max_agents: null,
+    recent_sessions: d.agents.map(a => ({
+      id: a.session_id,
+      mission_title: a.title,
+      status: a.status,
+      started_at: a.started_at,
+    })),
+  };
+}
+
+export default function Dashboard({ navigate, memberId = null }) {
   const [stats, setStats] = useState(null);
   const [sysStatus, setSysStatus] = useState(null);
   const [error, setError] = useState(null);
@@ -54,29 +78,40 @@ export default function Dashboard({ navigate }) {
   const [planPrompt, setPlanPrompt] = useState('');
   const [planning, setPlanning] = useState(false);
   const [planResult, setPlanResult] = useState(null);
-  const [plugins, setPlugins] = useState(null);
-  const [mcpCopied, setMcpCopied] = useState(false);
+  const [member, setMember] = useState(null);
+  const [readiness, setReadiness] = useState(null);
 
   const load = async () => {
     try {
-      const [s, sys, p] = await Promise.all([
+      if (memberId) {
+        // Readiness first: a member with an unproven environment must not see a
+        // dashboard that implies they can dispatch work.
+        const r = await getMemberReadiness(memberId);
+        setReadiness(r);
+        if (!r.ready) { setMember(null); setStats(null); return; }
+        const d = await getMemberDashboard(memberId);
+        setMember(d);
+        setStats(asStats(d));
+        setSysStatus(await getSystemStatus().catch(() => null));
+        return;
+      }
+      const [s, sys] = await Promise.all([
         getDashboardStats(),
         getSystemStatus().catch(() => null),
-        getPlugins().catch(() => null),
       ]);
       setStats(s);
       setSysStatus(sys);
-      setPlugins(p);
     } catch (e) {
       setError(e.message);
     }
   };
 
   useEffect(() => {
+    setStats(null); setMember(null); setReadiness(null); setError(null);
     load();
     const id = setInterval(load, 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [memberId]);
 
   useEffect(() => {
     const t = setInterval(() => setClock(formatDateTime()), 30000);
@@ -84,6 +119,17 @@ export default function Dashboard({ navigate }) {
   }, []);
 
   if (error) return <div className="empty-state"><h3>Cannot connect to API</h3><p>{error}</p></div>;
+
+  // Locked until this member's GitHub + Claude tokens have actually been used
+  // successfully. No dashboard, no task assignment, no dispatch.
+  if (memberId && readiness && !readiness.ready) return (
+    <EnvironmentSetup
+      memberId={memberId}
+      name={readiness.name || memberId}
+      readiness={readiness}
+      onReady={load}
+    />
+  );
   if (!stats) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh' }}>
       <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -127,7 +173,7 @@ export default function Dashboard({ navigate }) {
             textTransform: 'uppercase',
             marginBottom: 8,
           }}>
-            Claude DevFleet
+            {member ? 'Mission Control' : 'Claude DevFleet'}
           </p>
           <h2 style={{
             fontSize: 36,
@@ -139,13 +185,16 @@ export default function Dashboard({ navigate }) {
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
           }}>
-            Mission Control
+            {member ? (member.member.display_name || member.member.name) : 'Mission Control'}
           </h2>
           <p style={{ fontSize: 14, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
             {clock}
           </p>
         </div>
       </div>
+
+      {/* ── Member mode: queue or dispatch work for this person ── */}
+      {member && <AssignTask memberId={memberId} onDone={load} />}
 
       {/* ── Running Agents Indicator ── */}
       {hasRunning && (
@@ -251,7 +300,9 @@ export default function Dashboard({ navigate }) {
         />
         <StatsCard
           label="Running Agents"
-          value={`${stats.running_agents} / ${stats.max_agents}`}
+          value={stats.max_agents == null
+            ? `${stats.running_agents}`
+            : `${stats.running_agents} / ${stats.max_agents}`}
           accent={hasRunning}
           icon={ICONS.cpu}
           color={hasRunning ? 'var(--warning)' : undefined}
@@ -274,8 +325,9 @@ export default function Dashboard({ navigate }) {
         </div>
       )}
 
-      {/* ── AI Planner ── */}
-      <div style={{
+      {/* ── AI Planner — master only; a member's tab assigns work, it doesn't
+             spawn global unassigned projects ── */}
+      {!memberId && <div style={{
         marginBottom: 28,
         padding: '20px 24px',
         background: 'linear-gradient(135deg, rgba(218,119,86,0.06) 0%, rgba(59,130,246,0.04) 100%)',
@@ -412,167 +464,10 @@ export default function Dashboard({ navigate }) {
             </p>
           </div>
         )}
-      </div>
+      </div>}
 
-      {/* ── MCP Integration + Plugins ── */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: 16,
-        marginBottom: 28,
-      }}>
-        {/* MCP Connection Card */}
-        <div style={{
-          padding: '18px 22px',
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-lg, 12px)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
-            </svg>
-            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent-text)' }}>
-              MCP Server
-            </span>
-            <span style={{
-              fontSize: 10, padding: '1px 8px', marginLeft: 'auto',
-              background: 'rgba(34,197,94,0.1)', color: 'var(--success)',
-              borderRadius: 'var(--radius-full)', fontWeight: 600,
-            }}>
-              11 tools
-            </span>
-          </div>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
-            Connect Claude Code, Cursor, or any MCP client to orchestrate agents directly from your IDE.
-          </p>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '8px 12px',
-            background: 'var(--bg-base)',
-            borderRadius: 'var(--radius-sm)',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            color: 'var(--text-secondary)',
-          }}>
-            <code style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              claude mcp add devfleet --transport http http://localhost:18801/mcp
-            </code>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText('claude mcp add devfleet --transport http http://localhost:18801/mcp');
-                setMcpCopied(true);
-                setTimeout(() => setMcpCopied(false), 2000);
-              }}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: mcpCopied ? 'var(--success)' : 'var(--text-dim)',
-                fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
-              }}
-            >
-              {mcpCopied ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-            {['plan_project', 'dispatch_mission', 'wait_for_mission', 'get_dashboard', 'cancel_mission'].map(t => (
-              <span key={t} style={{
-                fontSize: 9, padding: '2px 6px',
-                background: 'rgba(218,119,86,0.06)', color: 'var(--accent-text)',
-                borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-mono)',
-              }}>{t}</span>
-            ))}
-            <span style={{
-              fontSize: 9, padding: '2px 6px',
-              color: 'var(--text-dim)',
-            }}>+6 more</span>
-          </div>
-        </div>
-
-        {/* Plugins Card */}
-        <div style={{
-          padding: '18px 22px',
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-lg, 12px)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
-            </svg>
-            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent-text)' }}>
-              Plugins
-            </span>
-            <span style={{
-              fontSize: 10, padding: '1px 8px', marginLeft: 'auto',
-              background: plugins?.loaded?.length ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.05)',
-              color: plugins?.loaded?.length ? 'var(--success)' : 'var(--text-dim)',
-              borderRadius: 'var(--radius-full)', fontWeight: 600,
-            }}>
-              {plugins?.loaded?.length || 0} loaded
-            </span>
-          </div>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
-            Extend with custom MCP tools and lifecycle hooks. Drop a <code style={{ fontSize: 11 }}>.py</code> file in <code style={{ fontSize: 11 }}>plugins/</code> to auto-load.
-          </p>
-
-          {plugins?.loaded?.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {plugins.loaded.map(name => (
-                <div key={name} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '6px 10px',
-                  background: 'var(--bg-base)',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: 12,
-                }}>
-                  <span style={{ color: 'var(--success)', fontSize: 10 }}>●</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>{name}</span>
-                </div>
-              ))}
-              {plugins.custom_tools?.length > 0 && (
-                <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-                  {plugins.custom_tools.map(t => (
-                    <span key={t.name} style={{
-                      fontSize: 9, padding: '2px 6px',
-                      background: 'rgba(34,197,94,0.06)', color: 'var(--success)',
-                      borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-mono)',
-                    }}>{t.name}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{
-              padding: '10px 14px',
-              background: 'var(--bg-base)',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: 11, color: 'var(--text-dim)',
-              fontFamily: 'var(--font-mono)',
-              lineHeight: 1.6,
-            }}>
-              # plugins/my_plugin.py<br/>
-              def register(registry):<br/>
-              &nbsp;&nbsp;@registry.tool("my_tool", ...)<br/>
-              &nbsp;&nbsp;async def my_tool(args): ...
-            </div>
-          )}
-
-          {plugins?.hooks && Object.keys(plugins.hooks).length > 0 && (
-            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-              {Object.entries(plugins.hooks).map(([event, count]) => (
-                <span key={event} style={{
-                  fontSize: 9, padding: '2px 6px',
-                  background: 'rgba(251,191,36,0.08)', color: 'var(--warning)',
-                  borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-mono)',
-                }}>{event} ({count})</span>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Quick Actions ── */}
-      <div style={{
+      {/* ── Quick Actions — master only; members queue work via AssignTask ── */}
+      {!memberId && <div style={{
         display: 'flex',
         gap: 12,
         marginBottom: 32,
@@ -580,7 +475,7 @@ export default function Dashboard({ navigate }) {
       }}>
         <button
           className="btn btn-primary"
-          onClick={() => navigate('missions')}
+          onClick={() => navigate('projects')}
           style={{
             padding: '12px 24px',
             fontSize: 14,
@@ -634,7 +529,15 @@ export default function Dashboard({ navigate }) {
             Watch Live
           </button>
         )}
-      </div>
+      </div>}
+
+      {/* ── Console: everything happening, live ── */}
+      <SessionConsole
+        title={member ? 'Console — this environment' : 'Console — all sessions'}
+        sessions={(stats.recent_sessions || []).filter(
+          s => s.status === 'running' || s.status === 'paused' || s.status === 'takeover')}
+        navigate={navigate}
+      />
 
       {/* ── Recent Activity ── */}
       <div className="section">
@@ -668,7 +571,7 @@ export default function Dashboard({ navigate }) {
             <div
               key={s.id}
               className="activity-item"
-              onClick={() => s.status === 'running' ? navigate('live', s.id) : navigate('missions')}
+              onClick={() => s.status === 'running' ? navigate('live', s.id) : null}
               style={{
                 transition: 'all 0.2s',
                 borderLeft: s.status === 'running'
